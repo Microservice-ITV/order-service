@@ -1,13 +1,13 @@
 <?php
 
-namespace App\Repositories\Eloquent;
+namespace App\Repositories;
 
 use App\Models\Cart;
 use App\Models\CartItem;
-use App\Contracts\CartRepositoryInterface;
+use App\Contracts\CartInterface;
 use App\Repositories\BaseRepository;
 
-class CartRepository extends BaseRepository implements CartRepositoryInterface
+class CartRepository extends BaseRepository implements CartInterface
 {
     public function getByUser(int $userId): Cart
     {

@@ -5,7 +5,7 @@ namespace App\Contracts;
 use App\Contracts\BaseInterface;
 use App\Models\Cart;
 
-interface CartRepositoryInterface extends BaseInterface
+interface CartInterface extends BaseInterface
 {
     // Query (with DB lock to prevent double checkout)
     public function getByUser(int $userId): Cart;
