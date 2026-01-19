@@ -4,13 +4,13 @@ namespace App\Services;
 
 use App\Clients\ProductClient;
 use App\Exceptions\BusinessException;
-use App\Contracts\CartRepositoryInterface;
+use App\Contracts\CartInterface;
 use Illuminate\Support\Facades\DB;
 
 class CartService
 {
     public function __construct(
-        private CartRepositoryInterface $cartRepo,
+        private CartInterface $cartRepo,
         private ProductClient $productClient
     ) {}
 

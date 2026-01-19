@@ -15,7 +15,7 @@ class RepositoryServiceProvider extends ServiceProvider
 
         foreach (glob($contractsPath . '/*.php') as $interface)
         {
-            // Example: App\Contracts\OrderRepositoryInterface
+            // Example: App\Contracts\OrderInterface
             $interface = 'App\\Contracts\\' . basename($interface, '.php');
 
             // Only bind interfaces
@@ -24,7 +24,7 @@ class RepositoryServiceProvider extends ServiceProvider
             }
 
             // Convert Interface → Repository
-            // OrderRepositoryInterface → OrderRepository
+            // OrderInterface → OrderRepository
             $repositoryClass = str_replace('Interface', '', basename($interface, '.php'));
 
             // Full class name: App\Repositories\OrderRepository
