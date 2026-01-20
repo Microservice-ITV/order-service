@@ -20,11 +20,11 @@ use App\Exceptions\RepositoryException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 
-class BaseRepository implements BaseInterface
+abstract class BaseRepository implements BaseInterface
 {
     protected Model $model;
 
-    public function __construct(Model $model)
+    protected function setModel(Model $model): void
     {
         $this->model = $model;
     }
