@@ -32,10 +32,11 @@ class CartController extends Controller
 
     public function store(AddToCartRequest $request): JsonResponse
     {
-        $this->service->addItem(
+        $result = $this->service->addItem(
             $this->userId($request),
             $request->validated()
         );
+        dd($result);
 
         return response()->json(['message' => 'Item added'], 201);
     }

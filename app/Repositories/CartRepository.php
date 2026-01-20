@@ -9,6 +9,11 @@ use App\Repositories\BaseRepository;
 
 class CartRepository extends BaseRepository implements CartInterface
 {
+    public function __construct(Cart $cart)
+    {
+        $this->setModel($cart);
+    }
+    
     public function getByUser(int $userId): Cart
     {
         return Cart::with('items')->firstOrCreate(['user_id' => $userId]);

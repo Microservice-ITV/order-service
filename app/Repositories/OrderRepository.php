@@ -9,9 +9,9 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class OrderRepository extends BaseRepository implements OrderInterface
 {
-    public function __construct(Order $model)
+    public function __construct(Order $order)
     {
-        parent::__construct($model);
+        $this->setModel($order);
     }
 
     /**
