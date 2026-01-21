@@ -8,10 +8,9 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('orders', function (Blueprint $table) {
-            $table->id();
-            $table->unsignedBigInteger('user_id')->index();
-            $table->decimal('total_amount', 12, 2);
+            $table->uuid('id')->primary();
             $table->string('status');
+            $table->decimal('total', 10, 2)->nullable();
             $table->timestamps();
         });
     }

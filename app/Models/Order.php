@@ -2,28 +2,17 @@
 
 namespace App\Models;
 
+use App\Enums\OrderStatus;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Order extends Model
 {
-    public const STATUS_PENDING  = 'pending';
-    public const STATUS_PAID     = 'paid';
-    public const STATUS_FAILED   = 'failed';
-    public const STATUS_CANCELLED = 'canceled';
+    public $incrementing = false;
+    protected $keyType = 'string';
 
-    protected $fillable = [
-        'user_id',
-        'total_amount',
-        'status',
-        'payment_id',
-    ];
+    protected $fillable = ['id', 'status', 'total'];
 
-    protected $casts = [
-        'total_amount' => 'decimal:2',
-    ];
-
-    public function items(): HasMany
+    public function items()
     {
         return $this->hasMany(OrderItem::class);
     }
