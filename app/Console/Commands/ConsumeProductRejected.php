@@ -8,10 +8,14 @@ use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumeProductRejected extends BaseConsumer
 {
-    // protected function topic(): string
-    // {
-    //     return EventTopic::PRODUCT_REJECTED->value;
-    // }
+    protected $signature = 'consume:product-rejected';
+    protected $description = 'Consume product rejected events';
+
+    protected function queue(): string
+    {
+        return config('rabbitmq.queues.product');
+    }
+
     protected function routingKeys(): array
     {
         return [EventTopic::PRODUCT_REJECTED->value];

@@ -11,6 +11,14 @@ use Illuminate\Support\Facades\DB;
 
 class ConsumeProductValidated extends BaseConsumer
 {
+    protected $signature = 'consume:product-validated';
+    protected $description = 'Consume product validated events';
+
+    protected function queue(): string
+    {
+        return config('rabbitmq.queues.product');
+    }
+
     protected function routingKeys(): array
     {
         return [EventTopic::PRODUCT_VALIDATED->value];

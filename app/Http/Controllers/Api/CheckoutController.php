@@ -13,9 +13,10 @@ class CheckoutController extends Controller
     {
         logger('CHECKOUT API HIT');
 
-        $cart = session('cart');
+        // Get items from request body first, then fallback to session
+        $items = request()->input('items') ?? session('cart.items');
 
-        if (!$cart || empty($cart['items'])) {
+        if (!$items || empty($items)) {
             logger('CART EMPTY');
             return response()->json(['error' => 'Cart empty'], 400);
         }
@@ -25,7 +26,7 @@ class CheckoutController extends Controller
 
         Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, [
             'order_id' => $order->id,
-            'items' => $cart['items']
+            'items' => $items
         ]);
         logger('ORDER_CREATED EVENT PUBLISHED');
         

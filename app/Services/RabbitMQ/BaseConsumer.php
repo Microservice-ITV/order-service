@@ -2,14 +2,17 @@
 
 namespace App\Services\RabbitMQ;
 
-abstract class BaseConsumer
+use Illuminate\Console\Command;
+
+abstract class BaseConsumer extends Command
 {
     abstract protected function routingKeys(): array;
+    abstract protected function queue(): string;
     abstract protected function process(array $payload): void;
 
-    protected function queue(): string
+    public function handle(): void
     {
-        return config('rabbitmq.queues.product');
+        $this->listen();
     }
 
     public function listen(): void

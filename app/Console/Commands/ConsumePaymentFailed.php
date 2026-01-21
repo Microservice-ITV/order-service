@@ -8,10 +8,14 @@ use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumePaymentFailed extends BaseConsumer
 {
-    // protected function topic(): string
-    // {
-    //     return EventTopic::PAYMENT_FAILED->value;
-    // }
+    protected $signature = 'consume:payment-failed';
+    protected $description = 'Consume payment failed events';
+
+    protected function queue(): string
+    {
+        return config('rabbitmq.queues.payment');
+    }
+
     protected function routingKeys(): array
     {
         return [EventTopic::PAYMENT_FAILED->value];

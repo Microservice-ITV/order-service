@@ -8,10 +8,14 @@ use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumePaymentSucceeded extends BaseConsumer
 {
-    // protected function topic(): string
-    // {
-    //     return EventTopic::PAYMENT_SUCCEEDED->value;
-    // }
+    protected $signature = 'consume:payment-succeeded';
+    protected $description = 'Consume payment succeeded events';
+
+    protected function queue(): string
+    {
+        return config('rabbitmq.queues.payment');
+    }
+
     protected function routingKeys(): array
     {
         return [EventTopic::PAYMENT_SUCCEEDED->value];
