@@ -1,16 +1,5 @@
 <?php
 
-/**
- * Planning
- *
- * - Middleware for sanitizing incoming request data.
- * - Applies:
- *   - Key sanitization using `FILTER_SANITIZE_STRING`.
- *   - Value sanitization using `strip_tags` for string values.
- * - Ensures protection against XSS, malicious inputs, and invalid request data.
- * - Applied early in request lifecycle before hitting controllers.
- */
-
 namespace App\Http\Middleware;
 
 use Closure;
@@ -19,19 +8,44 @@ use Symfony\Component\HttpFoundation\Response;
 
 class SanitizeInput
 {
-    public function handle(Request $request, Closure $next)
+    /**
+     * Handle incoming request and sanitize input to prevent XSS
+     */
+    public function handle(Request $request, Closure $next): Response
     {
-        $data = $request->all();
-
-        foreach ($data as $key => $value) {
-            $cleanKey = filter_var($key, FILTER_SANITIZE_STRING);
-            $cleanValue = is_string($value) ? strip_tags($value) : $value;
-            $data[$cleanKey] = $cleanValue;
+        // Skip sanitization for file uploads
+        if ($request->hasFile('file') || $request->hasFile('files')) {
+            return $next($request);
         }
 
-        // Replace request data with sanitized data
-        $request->replace($data);
+        // Sanitize request data recursively
+        $sanitized = $this->sanitizeData($request->all());
+        $request->replace($sanitized);
 
         return $next($request);
+    }
+
+    /**
+     * Recursively sanitize all input data
+     */
+    private function sanitizeData(array $data): array
+    {
+        return array_map(function ($value) {
+            if (is_array($value)) {
+                return $this->sanitizeData($value);
+            }
+
+            if (is_string($value)) {
+                // Use htmlspecialchars for XSS prevention
+                // Strip tags for additional protection
+                return htmlspecialchars(
+                    strip_tags($value),
+                    ENT_QUOTES,
+                    'UTF-8'
+                );
+            }
+
+            return $value;
+        }, $data);
     }
 }

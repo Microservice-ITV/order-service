@@ -324,30 +324,299 @@ php artisan test tests/Feature/CheckoutTest.php
 
 ## API Endpoints
 
-### 1. Checkout Endpoint
+### Authentication
+
+All endpoints (except webhooks) require JWT token:
+
+```bash
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+### 1. Checkout - Create Order
 
 **Create a new order from cart items**
 
 ```
 POST /api/checkout
 Content-Type: application/json
+Authorization: Bearer <token>
 
 {
   "items": [
     {
-      "product_id": integer,
-      "qty": integer,
-      "price": decimal
+      "product_id": 1,
+      "qty": 2,
+      "price": 29.99
     }
   ]
+}
+```
+
+**Response** (201 Created):
+```json
+{
+  "success": true,
+  "message": "Order created successfully",
+  "data": {
+    "order_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "created",
+    "total": 59.98
+  }
+}
+```
+
+**Status Codes**:
+- `201` - Order created successfully
+- `400` - Validation error (invalid items format)
+- `401` - Unauthorized (invalid/missing token)
+- `429` - Too many requests (rate limit exceeded)
+- `500` - Server error (RabbitMQ connection issue)
+
+---
+
+### 2. List Orders - Get User's Orders
+
+**Retrieve paginated list of user's orders**
+
+```
+GET /api/orders
+Authorization: Bearer <token>
+```
+
+**Query Parameters** (optional):
+```
+?page=1
+?per_page=15
+?sort=-created_at
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Orders retrieved successfully",
+  "data": [
+    {
+      "id": "uuid",
+      "status": "confirmed",
+      "total": 99.99,
+      "items_count": 2,
+      "items": [
+        {
+          "id": 1,
+          "product_id": 1,
+          "quantity": 2,
+          "price": 49.99,
+          "subtotal": 99.98,
+          "created_at": "2026-01-15T10:30:00Z"
+        }
+      ],
+      "created_at": "2026-01-15T10:00:00Z",
+      "updated_at": "2026-01-15T10:30:00Z"
+    }
+  ],
+  "meta": {
+    "current_page": 1,
+    "from": 1,
+    "last_page": 1,
+    "per_page": 15,
+    "to": 1,
+    "total": 1
+  }
+}
+```
+
+---
+
+### 3. Get Order - Order Details
+
+**Retrieve specific order with items**
+
+```
+GET /api/orders/{id}
+Authorization: Bearer <token>
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Order retrieved successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "confirmed",
+    "total": 99.99,
+    "items_count": 2,
+    "items": [
+      {
+        "id": 1,
+        "product_id": 1,
+        "quantity": 2,
+        "price": 49.99,
+        "subtotal": 99.98,
+        "created_at": "2026-01-15T10:00:00Z"
+      }
+    ],
+    "created_at": "2026-01-15T10:00:00Z",
+    "updated_at": "2026-01-15T10:30:00Z"
+  }
+}
+```
+
+**Status Codes**:
+- `200` - Success
+- `401` - Unauthorized
+- `403` - Cannot view other user's orders
+- `404` - Order not found
+
+---
+
+### 4. Order Statistics - Analytics
+
+**Get order statistics for authenticated user**
+
+```
+GET /api/orders/statistics
+Authorization: Bearer <token>
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Statistics retrieved successfully",
+  "data": {
+    "total_orders": 15,
+    "confirmed_orders": 12,
+    "pending_orders": 2,
+    "failed_orders": 1,
+    "total_spent": 1499.99,
+    "average_order_value": 99.99
+  }
+}
+```
+
+---
+
+## Webhook Endpoints
+
+### Webhooks from Other Microservices
+
+These endpoints receive events from Product Service and Payment Service.
+No authentication required (internal service communication).
+
+### 1. Product Validated Webhook
+
+**Called when product stock is reserved**
+
+```
+POST /api/webhooks/product/validated
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Response** (200 OK):
 ```json
 {
-  "order_id": "uuid"
+  "success": true,
+  "message": "Product validation processed"
 }
+```
+
+---
+
+### 2. Product Rejected Webhook
+
+**Called when product is out of stock**
+
+```
+POST /api/webhooks/product/rejected
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Product rejection processed"
+}
+```
+
+---
+
+### 3. Payment Succeeded Webhook
+
+**Called when payment is authorized**
+
+```
+POST /api/webhooks/payment/succeeded
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Payment success processed"
+}
+```
+
+---
+
+### 4. Payment Failed Webhook
+
+**Called when payment is declined**
+
+```
+POST /api/webhooks/payment/failed
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Payment failure processed"
+}
+```
+
+---
+
+### 5. Health Check Endpoint
+
+**Check service status**
+
+```
+GET /api/health
+```
+
+**Response** (200 OK):
+```json
+{
+  "status": "ok",
+  "service": "order-service",
+  "timestamp": "2026-01-15T10:30:00Z"
+}
+```
+
+---
+
+## Error Handling
 ```
 
 **Response** (400 Bad Request):
