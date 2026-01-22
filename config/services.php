@@ -41,6 +41,7 @@ return [
     
     'product' => [
         'url' => env('PRODUCT_SERVICE_URL'),
+        'api_key' => env('PRODUCT_SERVICE_API_KEY'),
     ],
 
 ];

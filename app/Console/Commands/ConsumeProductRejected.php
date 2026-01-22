@@ -13,7 +13,7 @@ class ConsumeProductRejected extends BaseConsumer
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.product');
+        return config('rabbitmq.queues.product_rejected');
     }
 
     protected function routingKeys(): array
@@ -23,6 +23,7 @@ class ConsumeProductRejected extends BaseConsumer
     
     protected function process(array $payload): void
     {
+        logger('PRODUCT_REJECTED EVENT RECEIVED', ['payload' => $payload]);
         $data = $payload['data'] ?? $payload;
         $orderId = $data['order_id'] ?? null;
 

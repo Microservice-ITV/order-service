@@ -16,7 +16,7 @@ class ConsumeProductValidated extends BaseConsumer
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.product');
+        return config('rabbitmq.queues.product_reserved');
     }
 
     protected function routingKeys(): array
@@ -26,6 +26,8 @@ class ConsumeProductValidated extends BaseConsumer
 
     protected function process(array $payload): void
     {
+        logger('PRODUCT_VALIDATED EVENT RECEIVED', ['payload' => $payload]);
+
         $data = $payload['data'] ?? $payload;
         $orderId = $data['order_id'] ?? null;
 
@@ -56,11 +58,18 @@ class ConsumeProductValidated extends BaseConsumer
                 'order_id' => $orderId,
                 'routing_key' => EventTopic::PAYMENT_REQUESTED->value,
             ]);
+
+            app(OrderService::class)->markPendingPayment($orderId);
+
+            logger('PENDING_PAYMENT STATUS SET', [
+                'order_id' => $orderId,
+            ]);
         });
     }
 
     private function calculateOrderTotal(string $orderId): float
     {
+        logger('CALCULATING ORDER TOTAL', ['order_id' => $orderId]);
         return (float) OrderItem::where('order_id', $orderId)
             ->get()
             ->sum(function (OrderItem $item) {

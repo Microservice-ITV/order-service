@@ -11,7 +11,8 @@ return [
     'ssl' => env('RABBITMQ_SSL', false),
 
     'queues' => [
-        'product' => env('RABBITMQ_QUEUE_PRODUCT'),
+        'product_reserved' => env('RABBITMQ_QUEUE_PRODUCT_RESERVED'),
+        'product_rejected' => env('RABBITMQ_QUEUE_PRODUCT_REJECTED'),
         'payment' => env('RABBITMQ_QUEUE_PAYMENT'),
     ],
 ];

@@ -23,9 +23,9 @@ return new class extends Migration {
                     WHEN 'failed_stock' THEN 3
                     WHEN 'paid' THEN 4
                     WHEN 'failed_payment' THEN 5
+                    WHEN 'pending_payment' THEN 6
                     WHEN 'created' THEN 1
                     WHEN 'rejected' THEN 3
-                    WHEN 'pending_payment' THEN 2
                     WHEN 'confirmed' THEN 4
                     WHEN 'failed' THEN 5
                     ELSE 1
@@ -57,6 +57,7 @@ return new class extends Migration {
                 WHEN 3 THEN 'failed_stock'
                 WHEN 4 THEN 'paid'
                 WHEN 5 THEN 'failed_payment'
+                WHEN 6 THEN 'pending_payment'
                 ELSE 'pending_stock'
             END
         ");

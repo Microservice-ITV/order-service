@@ -7,7 +7,9 @@ use App\Http\Controllers\Controller;
 use App\Models\OrderItem;
 use App\Services\OrderService;
 use App\Services\RabbitMQ\Publisher;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 class CheckoutController extends Controller
 {
@@ -23,15 +25,52 @@ class CheckoutController extends Controller
             return response()->json(['error' => 'Cart empty'], 400);
         }
 
-        $order = DB::transaction(function () use ($service, $items) {
+        /** @var Response $pricingResponse */
+        $pricingResponse = Http::withHeaders([
+            'Content-Type' => 'application/json',
+            'X-SERVICE-KEY' => config('services.product.api_key'),
+        ])->post(rtrim(config('services.product.url'), '/') . '/api/v1/products/prices', [
+            'items' => $items,
+        ]);
+
+        if (!$pricingResponse->ok() || !($pricingResponse->json('success') ?? false)) {
+            logger('PRODUCT PRICE API FAILED', [
+                'status' => $pricingResponse->status(),
+                'body' => $pricingResponse->json(),
+            ]);
+
+            return response()->json(['error' => 'Unable to fetch product prices'], 502);
+        }
+
+        $pricingData = $pricingResponse->json();
+        $missingItems = $pricingData['missing'] ?? [];
+
+        if (!empty($missingItems)) {
+            return response()->json([
+                'error' => 'Some products are unavailable',
+                'missing' => $missingItems,
+            ], 400);
+        }
+        logger('PRODUCT PRICE API SUCCESS', ['pricingData' => $pricingData]);
+        
+        $priceByProduct = collect($pricingData['data'] ?? [])
+            ->keyBy('product_id');
+
+        $order = DB::transaction(function () use ($service, $items, $priceByProduct) {
             $order = $service->create();
 
             foreach ($items as $item) {
+                $priceItem = $priceByProduct->get($item['product_id']);
+
+                if (!$priceItem) {
+                    throw new \RuntimeException('Missing price for product: ' . $item['product_id']);
+                }
+
                 OrderItem::create([
                     'order_id' => $order->id,
                     'product_id' => $item['product_id'],
                     'qty' => $item['qty'],
-                    'price' => $item['price'] ?? null,
+                    'price' => $priceItem['unit_price'],
                 ]);
             }
 

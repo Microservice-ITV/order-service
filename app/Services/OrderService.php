@@ -36,17 +36,26 @@ class OrderService
             ]);
     }
 
-    public function confirm(string $orderId): void
+    public function markPendingPayment(string $orderId): void
     {
         Order::where('id', $orderId)
             ->where('status_id', OrderStatus::STOCK_CONFIRMED->value)
+            ->update([
+                'status_id' => OrderStatus::PENDING_PAYMENT->value,
+            ]);
+    }
+
+    public function confirm(string $orderId): void
+    {
+        Order::where('id', $orderId)
+            ->where('status_id', OrderStatus::PENDING_PAYMENT->value)
             ->update(['status_id' => OrderStatus::PAID->value]);
     }
 
     public function fail(string $orderId, ?string $reason = null): void
     {
         Order::where('id', $orderId)
-            ->where('status_id', OrderStatus::STOCK_CONFIRMED->value)
+            ->where('status_id', OrderStatus::PENDING_PAYMENT->value)
             ->update([
                 'status_id' => OrderStatus::FAILED_PAYMENT->value,
                 'failure_reason' => $reason,
