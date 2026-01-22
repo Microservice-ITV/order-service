@@ -31,12 +31,16 @@ class ConsumeProductValidated extends BaseConsumer
                 ->markPendingPayment($payload['order_id'], $payload['total']);
 
             foreach ($payload['items'] as $item) {
-                OrderItem::create([
-                    'order_id' => $payload['order_id'],
-                    'product_id' => $item['product_id'],
-                    'qty' => $item['qty'],
-                    'price' => $item['price']
-                ]);
+                OrderItem::updateOrCreate(
+                    [
+                        'order_id' => $payload['order_id'],
+                        'product_id' => $item['product_id'],
+                    ],
+                    [
+                        'qty' => $item['qty'],
+                        'price' => $item['price'],
+                    ]
+                );
             }
 
             Publisher::publish(EventTopic::PAYMENT_REQUESTED, [

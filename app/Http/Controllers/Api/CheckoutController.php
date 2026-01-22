@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\EventTopic;
 use App\Http\Controllers\Controller;
+use App\Models\OrderItem;
 use App\Services\OrderService;
 use App\Services\RabbitMQ\Publisher;
+use Illuminate\Support\Facades\DB;
 
 class CheckoutController extends Controller
 {
@@ -21,12 +23,30 @@ class CheckoutController extends Controller
             return response()->json(['error' => 'Cart empty'], 400);
         }
 
-        $order = $service->create();
+        $order = null;
+        DB::transaction(function () use ($service, $items, &$order) {
+            $order = $service->create();
+
+            foreach ($items as $item) {
+                OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $item['product_id'],
+                    'qty' => $item['qty'],
+                    'price' => $item['price'] ?? null,
+                ]);
+            }
+        });
         logger('ORDER CREATED', ['order_id' => $order->id]);
 
         Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, [
-            'order_id' => $order->id,
-            'items' => $items
+            'event' => EventTopic::ORDER_CHECKOUT_REQUESTED->value,
+            'version' => 'v1',
+            'timestamp' => now()->utc()->toIso8601String(),
+            'producer' => 'order-service',
+            'data' => [
+                'order_id' => $order->id,
+                'items' => $items,
+            ],
         ]);
         logger('ORDER_CREATED EVENT PUBLISHED');
         
