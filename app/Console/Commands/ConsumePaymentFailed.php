@@ -23,6 +23,21 @@ class ConsumePaymentFailed extends BaseConsumer
 
     protected function process(array $payload): void
     {
-        app(OrderService::class)->fail($payload['order_id']);
+        $data = $payload['data'] ?? $payload;
+        $orderId = $data['order_id'] ?? null;
+
+        if (!$orderId) {
+            logger('PAYMENT_FAILED payload missing order_id', ['payload' => $payload]);
+            return;
+        }
+
+        $reason = $data['reason'] ?? null;
+        app(OrderService::class)->fail($orderId, $reason);
+
+        logger('PAYMENT_FAILED EVENT PROCESSED', [
+            'order_id' => $orderId,
+            'routing_key' => EventTopic::PAYMENT_FAILED->value,
+            'reason' => $reason,
+        ]);
     }
 }

@@ -9,7 +9,8 @@ return new class extends Migration {
     {
         Schema::create('orders', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->string('status');
+            $table->unsignedTinyInteger('status_id');
+            $table->string('failure_reason')->nullable();
             $table->decimal('total', 10, 2)->nullable();
             $table->timestamps();
         });

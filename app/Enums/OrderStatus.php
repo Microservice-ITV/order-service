@@ -2,11 +2,11 @@
 
 namespace App\Enums;
 
-enum OrderStatus: string
+enum OrderStatus: int
 {
-    case CREATED = 'created';
-    case REJECTED = 'rejected';
-    case PENDING_PAYMENT = 'pending_payment';
-    case CONFIRMED = 'confirmed';
-    case FAILED = 'failed';
+    case PENDING_STOCK = 1;
+    case STOCK_CONFIRMED = 2;
+    case FAILED_STOCK = 3;
+    case PAID = 4;
+    case FAILED_PAYMENT = 5;
 }

@@ -10,7 +10,7 @@ return new class extends Migration {
         Schema::create('order_items', function (Blueprint $table) {
             $table->id();
             $table->uuid('order_id');
-            $table->integer('product_id');
+            $table->uuid('product_id');
             $table->integer('qty');
             $table->decimal('price', 10, 2);
 

@@ -12,23 +12,26 @@ class OrderService
     {
         return Order::create([
             'id' => (string) Str::uuid(),
-            'status' => OrderStatus::CREATED
+            'status_id' => OrderStatus::PENDING_STOCK->value
         ]);
     }
 
-    public function reject(string $orderId): void
+    public function reject(string $orderId, ?string $reason = null): void
     {
         Order::where('id', $orderId)
-            ->where('status', OrderStatus::CREATED)
-            ->update(['status' => OrderStatus::REJECTED]);
+            ->where('status_id', OrderStatus::PENDING_STOCK->value)
+            ->update([
+                'status_id' => OrderStatus::FAILED_STOCK->value,
+                'failure_reason' => $reason,
+            ]);
     }
 
-    public function markPendingPayment(string $orderId, float $total): void
+    public function markStockConfirmed(string $orderId, float $total): void
     {
         Order::where('id', $orderId)
-            ->where('status', OrderStatus::CREATED)
+            ->where('status_id', OrderStatus::PENDING_STOCK->value)
             ->update([
-                'status' => OrderStatus::PENDING_PAYMENT,
+                'status_id' => OrderStatus::STOCK_CONFIRMED->value,
                 'total' => $total
             ]);
     }
@@ -36,13 +39,17 @@ class OrderService
     public function confirm(string $orderId): void
     {
         Order::where('id', $orderId)
-            ->where('status', OrderStatus::PENDING_PAYMENT)
-            ->update(['status' => OrderStatus::CONFIRMED]);
+            ->where('status_id', OrderStatus::STOCK_CONFIRMED->value)
+            ->update(['status_id' => OrderStatus::PAID->value]);
     }
 
-    public function fail(string $orderId): void
+    public function fail(string $orderId, ?string $reason = null): void
     {
         Order::where('id', $orderId)
-            ->update(['status' => OrderStatus::FAILED]);
+            ->where('status_id', OrderStatus::STOCK_CONFIRMED->value)
+            ->update([
+                'status_id' => OrderStatus::FAILED_PAYMENT->value,
+                'failure_reason' => $reason,
+            ]);
     }
 }

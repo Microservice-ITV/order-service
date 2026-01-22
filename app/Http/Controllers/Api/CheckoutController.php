@@ -23,8 +23,7 @@ class CheckoutController extends Controller
             return response()->json(['error' => 'Cart empty'], 400);
         }
 
-        $order = null;
-        DB::transaction(function () use ($service, $items, &$order) {
+        $order = DB::transaction(function () use ($service, $items) {
             $order = $service->create();
 
             foreach ($items as $item) {
@@ -35,6 +34,8 @@ class CheckoutController extends Controller
                     'price' => $item['price'] ?? null,
                 ]);
             }
+
+            return $order;
         });
         logger('ORDER CREATED', ['order_id' => $order->id]);
 
@@ -50,6 +51,9 @@ class CheckoutController extends Controller
         ]);
         logger('ORDER_CREATED EVENT PUBLISHED');
         
-        return response()->json(['order_id' => $order->id]);
+        return response()->json([
+            'order_id' => $order->id,
+            'message' => 'Order received and we are processing your order',
+        ]);
     }
 }

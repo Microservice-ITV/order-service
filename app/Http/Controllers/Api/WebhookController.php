@@ -16,12 +16,18 @@ class WebhookController extends Controller
             'order_id' => 'required|string|uuid',
             'total' => 'required|numeric',
             'items' => 'required|array',
-            'items.*.product_id' => 'required|integer',
+            'items.*.product_id' => 'required|string|uuid',
             'items.*.qty' => 'required|integer',
             'items.*.price' => 'required|numeric',
         ]);
 
-        Publisher::publish(EventTopic::PRODUCT_VALIDATED, $validated);
+        Publisher::publish(EventTopic::PRODUCT_VALIDATED, [
+            'event' => EventTopic::PRODUCT_VALIDATED->value,
+            'version' => 'v1',
+            'timestamp' => now()->utc()->toIso8601String(),
+            'producer' => 'order-service',
+            'data' => $validated,
+        ]);
 
         return response()->json([
             'message' => 'Product validated event published',
@@ -35,7 +41,13 @@ class WebhookController extends Controller
             'order_id' => 'required|string|uuid',
         ]);
 
-        Publisher::publish(EventTopic::PRODUCT_REJECTED, $validated);
+        Publisher::publish(EventTopic::PRODUCT_REJECTED, [
+            'event' => EventTopic::PRODUCT_REJECTED->value,
+            'version' => 'v1',
+            'timestamp' => now()->utc()->toIso8601String(),
+            'producer' => 'order-service',
+            'data' => $validated,
+        ]);
 
         return response()->json([
             'message' => 'Product rejected event published',
@@ -49,7 +61,13 @@ class WebhookController extends Controller
             'order_id' => 'required|string|uuid',
         ]);
 
-        Publisher::publish(EventTopic::PAYMENT_SUCCEEDED, $validated);
+        Publisher::publish(EventTopic::PAYMENT_SUCCEEDED, [
+            'event' => EventTopic::PAYMENT_SUCCEEDED->value,
+            'version' => 'v1',
+            'timestamp' => now()->utc()->toIso8601String(),
+            'producer' => 'order-service',
+            'data' => $validated,
+        ]);
 
         return response()->json([
             'message' => 'Payment succeeded event published',
@@ -63,7 +81,13 @@ class WebhookController extends Controller
             'order_id' => 'required|string|uuid',
         ]);
 
-        Publisher::publish(EventTopic::PAYMENT_FAILED, $validated);
+        Publisher::publish(EventTopic::PAYMENT_FAILED, [
+            'event' => EventTopic::PAYMENT_FAILED->value,
+            'version' => 'v1',
+            'timestamp' => now()->utc()->toIso8601String(),
+            'producer' => 'order-service',
+            'data' => $validated,
+        ]);
 
         return response()->json([
             'message' => 'Payment failed event published',

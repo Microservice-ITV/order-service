@@ -23,6 +23,21 @@ class ConsumeProductRejected extends BaseConsumer
     
     protected function process(array $payload): void
     {
-        app(OrderService::class)->reject($payload['order_id']);
+        $data = $payload['data'] ?? $payload;
+        $orderId = $data['order_id'] ?? null;
+
+        if (!$orderId) {
+            logger('PRODUCT_REJECTED payload missing order_id', ['payload' => $payload]);
+            return;
+        }
+
+        $reason = $data['reason'] ?? null;
+        app(OrderService::class)->reject($orderId, $reason);
+
+        logger('PRODUCT_REJECTED EVENT PROCESSED', [
+            'order_id' => $orderId,
+            'routing_key' => EventTopic::PRODUCT_REJECTED->value,
+            'reason' => $reason,
+        ]);
     }
 }

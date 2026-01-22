@@ -10,7 +10,11 @@ class Order extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $fillable = ['id', 'status', 'total'];
+    protected $fillable = ['id', 'status_id', 'total', 'failure_reason'];
+
+    protected $casts = [
+        'status_id' => 'integer',
+    ];
 
     public function items()
     {
