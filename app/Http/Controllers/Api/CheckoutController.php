@@ -117,6 +117,7 @@ class CheckoutController extends Controller
 
     private function fetchPricingData(array $items): array
     {
+        /** @var \Illuminate\Http\Client\Response $pricingResponse */
         $pricingResponse = Http::timeout(3)->retry(2, 100)
         ->withHeaders([
             'Content-Type' => 'application/json',

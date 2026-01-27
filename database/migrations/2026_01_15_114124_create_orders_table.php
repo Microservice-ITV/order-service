@@ -9,7 +9,7 @@ return new class extends Migration {
     {
         Schema::create('orders', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->uuid('correlation_id')->unique();
+            $table->string('correlation_id', 255)->unique();
             $table->uuid('reservation_id')->nullable();
             $table->uuid('payment_id')->nullable();
             $table->unsignedTinyInteger('status_id');

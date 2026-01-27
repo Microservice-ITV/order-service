@@ -12,7 +12,7 @@ return new class extends Migration {
         Schema::table('orders', function (Blueprint $table) {
             // Store only a fixed-length hash (not the raw client key) for security + index efficiency.
             // Nullable so existing orders don't need backfilling; MySQL unique index allows multiple NULLs.
-            $table->char('idempotency_key', 64)->nullable()->index()->after('failure_reason');
+            $table->string('idempotency_key', 255)->nullable()->index()->after('failure_reason');
             $table->unique('idempotency_key', 'checkout_sesssions_idempotency_key_unique');
         });
     }

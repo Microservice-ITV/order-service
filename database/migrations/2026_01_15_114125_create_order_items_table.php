@@ -12,7 +12,7 @@ return new class extends Migration {
             $table->uuid('checkout_id');
             $table->integer('qty');
             $table->decimal('price', 10, 2);
-
+            $table->timestamps();
             $table->foreign('checkout_id')->references('id')->on('orders')->cascadeOnDelete();
         });
     }
