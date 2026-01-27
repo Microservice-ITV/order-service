@@ -20,6 +20,8 @@ return new class extends Migration {
             ['id' => 4, 'name' => 'paid'],
             ['id' => 5, 'name' => 'failed_payment'],
             ['id' => 6, 'name' => 'pending_payment'],
+            ['id' => 7, 'name' => 'confirmed'],
+            ['id' => 8, 'name' => 'cancelled'],
         ]);
     }
 

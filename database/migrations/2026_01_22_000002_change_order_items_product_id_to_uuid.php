@@ -8,11 +8,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('order_items', function (Blueprint $table) {
-            $table->dropColumn('product_id');
-        });
-
-        Schema::table('order_items', function (Blueprint $table) {
-            $table->uuid('product_id')->after('order_id');
+            $table->uuid('product_id')->after('checkout_id');
         });
     }
 

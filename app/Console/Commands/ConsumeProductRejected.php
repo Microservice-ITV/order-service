@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
-use App\Services\OrderService;
+use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumeProductRejected extends BaseConsumer
@@ -33,7 +33,7 @@ class ConsumeProductRejected extends BaseConsumer
         }
 
         $reason = $data['reason'] ?? null;
-        app(OrderService::class)->reject($orderId, $reason);
+        app(CheckoutService::class)->reject($orderId, $reason);
 
         logger('PRODUCT_REJECTED EVENT PROCESSED', [
             'order_id' => $orderId,

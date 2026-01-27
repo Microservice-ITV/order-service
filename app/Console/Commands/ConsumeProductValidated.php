@@ -3,8 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
-use App\Models\OrderItem;
-use App\Services\OrderService;
+use App\Models\CheckoutItem;
+use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
@@ -29,50 +29,57 @@ class ConsumeProductValidated extends BaseConsumer
         logger('PRODUCT_VALIDATED EVENT RECEIVED', ['payload' => $payload]);
 
         $data = $payload['data'] ?? $payload;
-        $orderId = $data['order_id'] ?? null;
+        $checkoutId = $data['checkout_id'] ?? null;
 
-        if (!$orderId) {
-            logger('PRODUCT_VALIDATED payload missing order_id', ['payload' => $payload]);
+        if (!$checkoutId) {
+            logger('PRODUCT_VALIDATED payload missing checkout_id', ['payload' => $payload]);
             return;
         }
 
-        DB::transaction(function () use ($data, $orderId) {
+        DB::transaction(function () use ($data, $checkoutId) {
             
-            $total = $data['total'] ?? $this->calculateOrderTotal($orderId);
+            $total = $data['total'] ?? $this->calculateOrderTotal($checkoutId);
+            $reservationId = $data['reservation_id'] ?? null;
+            $correlationId = $data['correlation_id'] ?? null;
 
-            app(OrderService::class)
-                ->markStockConfirmed($orderId, $total);
+            if (!is_string($reservationId) || $reservationId === '') {
+                throw new \RuntimeException('Invalid reservation_id');
+            }
+
+            app(CheckoutService::class)->markStockConfirmed($checkoutId, $total, $reservationId);
 
             Publisher::publish(EventTopic::PAYMENT_REQUESTED, [
                 'event' => EventTopic::PAYMENT_REQUESTED->value,
                 'version' => 'v1',
                 'timestamp' => now()->utc()->toIso8601String(),
                 'producer' => 'order-service',
+                "correlation_id" => $correlationId,
                 'data' => [
-                    'order_id' => $orderId,
+                    'checkout_id' => $checkoutId,
                     'amount' => $total,
                 ],
             ]);
 
             logger('PAYMENT_REQUESTED EVENT PUBLISHED', [
-                'order_id' => $orderId,
+                'checkout_id' => $checkoutId,
                 'routing_key' => EventTopic::PAYMENT_REQUESTED->value,
             ]);
 
-            app(OrderService::class)->markPendingPayment($orderId);
+            app(CheckoutService::class)->markPendingPayment($checkoutId);
 
             logger('PENDING_PAYMENT STATUS SET', [
-                'order_id' => $orderId,
+                'checkout_id' => $checkoutId,
             ]);
         });
     }
 
-    private function calculateOrderTotal(string $orderId): float
+    private function calculateOrderTotal(string $checkoutId): float
     {
-        logger('CALCULATING ORDER TOTAL', ['order_id' => $orderId]);
-        return (float) OrderItem::where('order_id', $orderId)
+        logger('CALCULATING CHECKOUT TOTAL', ['checkout_id' => $checkoutId]);
+        return (float) CheckoutItem::query()
+            ->where('checkout_id', '=', $checkoutId)
             ->get()
-            ->sum(function (OrderItem $item) {
+            ->sum(function (CheckoutItem $item) {
                 return $item->qty * (float) ($item->price ?? 0);
             });
     }

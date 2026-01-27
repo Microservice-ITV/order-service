@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
-use App\Services\OrderService;
+use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumePaymentSucceeded extends BaseConsumer
@@ -31,7 +31,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
             return;
         }
 
-        app(OrderService::class)->confirm($orderId);
+        app(CheckoutService::class)->confirm($orderId);
         session()->forget('cart');
 
         logger('PAYMENT_SUCCEEDED EVENT PROCESSED', [

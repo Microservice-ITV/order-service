@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
-use App\Services\OrderService;
+use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 
 class ConsumePaymentFailed extends BaseConsumer
@@ -32,7 +32,7 @@ class ConsumePaymentFailed extends BaseConsumer
         }
 
         $reason = $data['reason'] ?? null;
-        app(OrderService::class)->fail($orderId, $reason);
+        app(CheckoutService::class)->fail($orderId, $reason);
 
         logger('PAYMENT_FAILED EVENT PROCESSED', [
             'order_id' => $orderId,
