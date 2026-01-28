@@ -14,15 +14,16 @@ return new class extends Migration {
         });
 
         DB::table('order_statuses')->insert([
-            ['id' => 1, 'name' => 'pending_stock'],
-            ['id' => 2, 'name' => 'stock_confirmed'],
-            ['id' => 3, 'name' => 'failed_stock'],
-            ['id' => 4, 'name' => 'paid'],
-            ['id' => 5, 'name' => 'failed_payment'],
-            ['id' => 6, 'name' => 'pending_payment'],
-            ['id' => 7, 'name' => 'confirmed'],
-            ['id' => 8, 'name' => 'cancelled'],
-        ]);
+            ['id' => 1, 'name' => 'PENDING_STOCK'],
+            ['id' => 2, 'name' => 'STOCK_CONFIRMED'],
+            ['id' => 3, 'name' => 'FAILED_STOCK'],
+            ['id' => 4, 'name' => 'PAID'],
+            ['id' => 5, 'name' => 'FAILED_PAYMENT'],
+            ['id' => 6, 'name' => 'PENDING_PAYMENT'],
+            ['id' => 7, 'name' => 'CONFIRMED'],
+            ['id' => 8, 'name' => 'CANCELLED'],
+        ]);        
+        
     }
 
     public function down(): void

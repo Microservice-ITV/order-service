@@ -9,10 +9,10 @@ return new class extends Migration {
     {
         Schema::create('orders', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->string('correlation_id', 255)->unique();
+            $table->unsignedTinyInteger('status_id')->index();
+            $table->string('correlation_id', 255)->unique()->index();;
             $table->uuid('reservation_id')->nullable();
             $table->uuid('payment_id')->nullable();
-            $table->unsignedTinyInteger('status_id');
             $table->decimal('total', 10, 2)->nullable();
             $table->timestamps();
         });

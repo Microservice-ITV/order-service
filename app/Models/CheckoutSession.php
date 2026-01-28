@@ -25,11 +25,7 @@ class CheckoutSession extends Model
     protected $fillable = ['id', 'status_id', 'total', 'failure_reason', 'idempotency_key', 'correlation_id', 'reservation_id', 'payment_id'];
 
     protected $casts = [
-        'status_id' => 'integer',
-        'idempotency_key' => 'string',
-        'correlation_id' => 'string',
-        'reservation_id' => 'string',
-        'payment_id' => 'string',
+        'status_id' => OrderStatus::class,
     ];
 
     public function items(): HasMany
