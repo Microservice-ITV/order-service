@@ -8,6 +8,7 @@ use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
+use App\Logging\LogMessage;
 
 class ConsumeProductValidated extends BaseConsumer
 {
@@ -26,13 +27,17 @@ class ConsumeProductValidated extends BaseConsumer
 
     protected function process(array $payload): void
     {
-        logger('PRODUCT_VALIDATED EVENT RECEIVED', ['payload' => $payload]);
+        logger()->info(LogMessage::PRODUCT_VALIDATED_RECEIVED, [
+            'payload' => $payload,
+        ]);
 
         $data = $payload['data'] ?? $payload;
         $checkoutId = $data['checkout_id'] ?? null;
 
         if (!$checkoutId) {
-            logger('PRODUCT_VALIDATED payload missing checkout_id', ['payload' => $payload]);
+            logger()->warning(LogMessage::PRODUCT_VALIDATED_MISSING_CHECKOUT_ID, [
+                'payload' => $payload,
+            ]);
             return;
         }
 
@@ -42,11 +47,25 @@ class ConsumeProductValidated extends BaseConsumer
             $reservationId = $data['reservation_id'] ?? null;
             $correlationId = $data['correlation_id'] ?? null;
 
+            // if (!is_string($reservationId) || $reservationId === '') {
+            //     throw new \RuntimeException('Invalid reservation_id');
+            // }
+
             if (!is_string($reservationId) || $reservationId === '') {
+                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                    'checkout_id' => $checkoutId,
+                    'reason'      => 'INVALID_RESERVATION_ID',
+                ]);
+
                 throw new \RuntimeException('Invalid reservation_id');
             }
 
             app(CheckoutService::class)->markStockConfirmed($checkoutId, $total, $reservationId);
+
+            logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
+                'checkout_id'    => $checkoutId,
+                'reservation_id' => $reservationId,
+            ]);
 
             Publisher::publish(EventTopic::PAYMENT_REQUESTED, [
                 'event' => EventTopic::PAYMENT_REQUESTED->value,
@@ -56,18 +75,19 @@ class ConsumeProductValidated extends BaseConsumer
                 "correlation_id" => $correlationId,
                 'data' => [
                     'checkout_id' => $checkoutId,
+                    'reservation_id' => $reservationId,
                     'amount' => $total,
                 ],
             ]);
 
-            logger('PAYMENT_REQUESTED EVENT PUBLISHED', [
+            logger()->info(LogMessage::PAYMENT_REQUESTED_PUBLISHED, [
                 'checkout_id' => $checkoutId,
-                'routing_key' => EventTopic::PAYMENT_REQUESTED->value,
+                'amount'      => $total,
             ]);
 
             app(CheckoutService::class)->markPendingPayment($checkoutId);
 
-            logger('PENDING_PAYMENT STATUS SET', [
+            logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
                 'checkout_id' => $checkoutId,
             ]);
         });
@@ -75,9 +95,12 @@ class ConsumeProductValidated extends BaseConsumer
 
     private function calculateOrderTotal(string $checkoutId): float
     {
-        logger('CALCULATING CHECKOUT TOTAL', ['checkout_id' => $checkoutId]);
+        logger()->info(LogMessage::CHECKOUT_TOTAL_CALCULATION_STARTED, [
+            'checkout_id' => $checkoutId,
+        ]);
+        
         return (float) CheckoutItem::query()
-            ->where('checkout_id', '=', $checkoutId)
+            ->where('checkout_id', $checkoutId)
             ->get()
             ->sum(function (CheckoutItem $item) {
                 return $item->qty * (float) ($item->price ?? 0);

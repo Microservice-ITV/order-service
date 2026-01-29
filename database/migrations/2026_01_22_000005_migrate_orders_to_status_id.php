@@ -35,11 +35,21 @@ return new class extends Migration {
             });
         }
 
+        // ✅ SAFETY: ensure no NULL values 
+        DB::table('orders')
+            ->whereNull('status_id')
+            ->update(['status_id' => 1]);
+
         Schema::table('orders', function (Blueprint $table) {
             $table->unsignedTinyInteger('status_id')->nullable(false)->change();
-            $table->foreign('status_id')->references('id')->on('order_statuses');
+            $table->index('status_id');
+            $table->foreign('status_id')
+                ->references('id')
+                ->on('order_statuses')
+                ->restrictOnDelete();
         });
     }
+
 
     public function down(): void
     {

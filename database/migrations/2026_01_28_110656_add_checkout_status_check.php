@@ -9,7 +9,7 @@ return new class extends Migration {
         DB::statement("
             ALTER TABLE checkout_sessions
             ADD CONSTRAINT chk_checkout_status
-            CHECK (status_id IN (1,2,3,4,5,6,7,8))
+            CHECK (status_id IN (1,2,3,4,5,6,7))
         ");
     }
 

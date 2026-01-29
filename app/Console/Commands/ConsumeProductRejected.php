@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Enums\EventTopic;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
+use App\Logging\LogMessage;
 
 class ConsumeProductRejected extends BaseConsumer
 {
@@ -23,22 +24,31 @@ class ConsumeProductRejected extends BaseConsumer
     
     protected function process(array $payload): void
     {
-        logger('PRODUCT_REJECTED EVENT RECEIVED', ['payload' => $payload]);
-        $data = $payload['data'] ?? $payload;
-        $orderId = $data['order_id'] ?? null;
+        logger()->info(LogMessage::PRODUCT_REJECTED_RECEIVED, [
+            'payload' => $payload,
+        ]);
 
-        if (!$orderId) {
-            logger('PRODUCT_REJECTED payload missing order_id', ['payload' => $payload]);
+        $data = $payload['data'] ?? $payload;
+        $checkoutId = $data['checkout_id'] ?? null;
+
+        if (!$checkoutId) {
+            logger()->warning(LogMessage::PRODUCT_REJECTED_MISSING_CHECKOUT_ID, [
+                'payload' => $payload,
+            ]);
             return;
         }
 
-        $reason = $data['reason'] ?? null;
-        app(CheckoutService::class)->reject($orderId, $reason);
+        $reason = $data['reason'] ?? 'PRODUCT_VALIDATION_FAILED';
 
-        logger('PRODUCT_REJECTED EVENT PROCESSED', [
-            'order_id' => $orderId,
-            'routing_key' => EventTopic::PRODUCT_REJECTED->value,
-            'reason' => $reason,
-        ]);
+        match (app(CheckoutService::class)->reject($checkoutId, $reason)) {
+            true => logger()->info(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                'checkout_id' => $checkoutId,
+                'reason'      => $reason,
+            ]),
+            false => logger()->warning(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
+                'checkout_id' => $checkoutId,
+            ]),
+        };
+        
     }
 }

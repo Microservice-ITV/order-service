@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Enums\EventTopic;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
+use App\Logging\LogMessage;
 
 class ConsumePaymentSucceeded extends BaseConsumer
 {
@@ -23,19 +24,31 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
     protected function process(array $payload): void
     {
-        $data = $payload['data'] ?? $payload;
-        $orderId = $data['order_id'] ?? null;
+        logger()->info(LogMessage::PAYMENT_SUCCEEDED_RECEIVED, [
+            'payload' => $payload,
+        ]);
 
-        if (!$orderId) {
-            logger('PAYMENT_SUCCEEDED payload missing order_id', ['payload' => $payload]);
+        $data = $payload['data'] ?? $payload;
+        $checkoutId = $data['checkout_id'] ?? null;
+
+        if (!$checkoutId) {
+            logger()->warning(LogMessage::PAYMENT_SUCCEEDED_MISSING_CHECKOUT_ID, [
+                'payload' => $payload,
+            ]);
             return;
         }
 
-        app(CheckoutService::class)->confirm($orderId);
-        session()->forget('cart');
+        if (!app(CheckoutService::class)->confirm($checkoutId)) {
+            logger()->warning(LogMessage::PAYMENT_CONFIRM_IGNORED_INVALID_STATE, [
+                'checkout_id' => $checkoutId,
+            ]);
+            return;
+        }
 
-        logger('PAYMENT_SUCCEEDED EVENT PROCESSED', [
-            'order_id' => $orderId,
+        // session()->forget('cart');
+
+        logger()->info(LogMessage::CHECKOUT_PAYMENT_CONFIRMED, [
+            'checkout_id' => $checkoutId,
             'routing_key' => EventTopic::PAYMENT_SUCCEEDED->value,
         ]);
     }

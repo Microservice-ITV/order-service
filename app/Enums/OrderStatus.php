@@ -10,8 +10,7 @@ enum OrderStatus: int
     case PAID            = 4;
     case FAILED_PAYMENT  = 5;
     case PENDING_PAYMENT = 6;
-    case CONFIRMED       = 7;
-    case CANCELLED       = 8;
+    case CANCELLED       = 7;
 }
 
 
