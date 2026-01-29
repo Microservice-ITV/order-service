@@ -42,7 +42,6 @@ return new class extends Migration {
 
         Schema::table('orders', function (Blueprint $table) {
             $table->unsignedTinyInteger('status_id')->nullable(false)->change();
-            $table->index('status_id');
             $table->foreign('status_id')
                 ->references('id')
                 ->on('order_statuses')
