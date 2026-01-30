@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Logging\LogMessage;
 use App\Enums\OrderStatus;
 use App\Models\CheckoutSession;
+use App\Models\Order;
 use Illuminate\Support\Str;
 
 class CheckoutService
@@ -118,6 +119,17 @@ class CheckoutService
             }
     
             return $updated === 1;
+    }
+
+    public function createFromCheckout( string $checkoutId, string $correlationId, ?string $reservationId = null): Order 
+    {
+        return Order::create([
+            'order_id'       => (string) Str::uuid(),
+            'checkout_id'    => $checkoutId,
+            'reservation_id' => $reservationId,
+            'status_id'      => OrderStatus::CONFIRMED->value,
+            'correlation_id' => $correlationId,
+        ]);
     }
 
     public function fail(string $checkoutId, ?string $reason = null): bool

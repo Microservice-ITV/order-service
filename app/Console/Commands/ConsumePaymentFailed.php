@@ -14,7 +14,7 @@ class ConsumePaymentFailed extends BaseConsumer
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.payment');
+        return config('rabbitmq.queues.payment_failed');
     }
 
     protected function routingKeys(): array

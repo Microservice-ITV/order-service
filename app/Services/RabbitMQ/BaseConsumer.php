@@ -58,7 +58,6 @@ abstract class BaseConsumer extends Command
 
         echo "Listening on queue: {$this->queue()}\n";
 
-        // ✅ THIS IS THE CORRECT LOOP
         while (true) {
             $channel->wait();
         }

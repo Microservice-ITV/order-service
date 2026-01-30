@@ -3,9 +3,13 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
-use App\Services\CheckoutService;
-use App\Services\RabbitMQ\BaseConsumer;
 use App\Logging\LogMessage;
+use App\Services\CheckoutService;
+use App\Services\OrderService;
+use App\Services\RabbitMQ\BaseConsumer;
+use App\Services\RabbitMQ\Publisher;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 class ConsumePaymentSucceeded extends BaseConsumer
 {
@@ -14,7 +18,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.payment');
+        return config('rabbitmq.queues.payment_success');
     }
 
     protected function routingKeys(): array
@@ -24,32 +28,110 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
     protected function process(array $payload): void
     {
-        logger()->info(LogMessage::PAYMENT_SUCCEEDED_RECEIVED, [
-            'payload' => $payload,
-        ]);
+        $data = $payload['data'] ?? [];
 
-        $data = $payload['data'] ?? $payload;
+        // Single source of truth for correlation ID
+        $correlationId = $payload['correlation_id']
+            ?? $data['correlation_id']
+            ?? null;
+
         $checkoutId = $data['checkout_id'] ?? null;
+        $paymentId  = $data['payment_id'] ?? null;
 
-        if (!$checkoutId) {
-            logger()->warning(LogMessage::PAYMENT_SUCCEEDED_MISSING_CHECKOUT_ID, [
+        if (!$checkoutId || !$correlationId) {
+            logger()->warning(LogMessage::PAYMENT_SUCCEEDED_INVALID_PAYLOAD, [
                 'payload' => $payload,
             ]);
             return;
         }
 
-        if (!app(CheckoutService::class)->confirm($checkoutId)) {
-            logger()->warning(LogMessage::PAYMENT_CONFIRM_IGNORED_INVALID_STATE, [
-                'checkout_id' => $checkoutId,
-            ]);
-            return;
-        }
-
-        // session()->forget('cart');
-
-        logger()->info(LogMessage::CHECKOUT_PAYMENT_CONFIRMED, [
-            'checkout_id' => $checkoutId,
-            'routing_key' => EventTopic::PAYMENT_SUCCEEDED->value,
+        logger()->info(LogMessage::PAYMENT_SUCCEEDED_RECEIVED, [
+            'checkout_id'    => $checkoutId,
+            'payment_id'     => $paymentId,
+            'correlation_id' => $correlationId,
         ]);
+
+        try {
+            DB::transaction(function () use (
+                $checkoutId,
+                $paymentId,
+                $correlationId,
+                &$order
+            ) {
+                /**
+                 * Confirm checkout (IDEMPOTENT)
+                 * - Must atomically check & update state
+                 */
+                $confirmed = app(CheckoutService::class)
+                    ->confirm($checkoutId);
+
+                if (!$confirmed) {
+                    logger()->warning(
+                        LogMessage::PAYMENT_CONFIRM_IGNORED_INVALID_STATE,
+                        ['checkout_id' => $checkoutId]
+                    );
+                    return;
+                }
+
+                /**
+                 *  Create order (idempotent by checkout_id UNIQUE)
+                 */
+                $order = app(OrderService::class)->createOrder(
+                    checkoutId: $checkoutId,
+                    correlationId: $correlationId
+                );
+
+                /**
+                 * Attach payment (optional, idempotent)
+                 */
+                if ($paymentId) {
+                    app(OrderService::class)->attachPayment(
+                        checkoutId: $checkoutId,
+                        paymentId: $paymentId
+                    );
+                }
+            });
+
+            if (!isset($order)) {
+                // Checkout already processed — safe to ignore
+                return;
+            }
+
+            logger()->info(LogMessage::ORDER_CREATED_AFTER_PAYMENT, [
+                'order_id'       => $order->order_id,
+                'checkout_id'    => $checkoutId,
+                'payment_id'     => $paymentId,
+                'correlation_id' => $correlationId,
+            ]);
+
+            /**
+             * Publish ORDER_SUCCEEDED event
+             * Downstream services (stock, shipping, email, etc.)
+             */
+            Publisher::publish(
+                EventTopic::ORDER_SUCCEEDED,
+                [
+                    'event'          => EventTopic::ORDER_SUCCEEDED->value,
+                    'correlation_id' => $correlationId,
+                    'data' => [
+                        'order_id'      => $order->order_id,
+                        'checkout_id'   => $checkoutId,
+                        'payment_id'    => $paymentId,
+                        'reservation_id'=> $order->reservation_id,
+                    ],
+                ]
+            );
+
+        } catch (Throwable $e) {
+            logger()->error(LogMessage::PAYMENT_SUCCEEDED_PROCESSING_FAILED, [
+                'checkout_id'    => $checkoutId,
+                'payment_id'     => $paymentId,
+                'correlation_id' => $correlationId,
+                'exception'      => $e,
+            ]);
+
+            // Let BaseConsumer decide retry / requeue behavior
+            throw $e;
+        }
     }
 }

@@ -57,6 +57,7 @@ class CheckoutController extends Controller
         }
 
         logger('CHECKOUT SESSION CREATED', ['checkout_id' => $checkout->id]);
+
         $this->publishOrderCheckoutEvent($checkout->id, $items, $idempotencyHash);
         
         return $this->successResponse($checkout->id);
@@ -65,6 +66,7 @@ class CheckoutController extends Controller
     private function getCheckoutItems(): array
     {
         $items = request()->input('items') ?? session('cart.items');
+
         if (!is_array($items) || $items === []) {
             return [];
         }
@@ -77,13 +79,18 @@ class CheckoutController extends Controller
             }
 
             $productId = (string) ($item['product_id'] ?? '');
+            $userId    = (string) ($item['user_id'] ?? '');
             $qty = (int) ($item['qty'] ?? 0);
 
-            if ($productId === '' || $qty <= 0) {
+            if ($productId === '' || $userId === '' || $qty <= 0) {
                 continue;
             }
 
-            $result[] = ['product_id' => $productId, 'qty' => $qty];
+            $result[] = [
+                'user_id'    => $userId,
+                'product_id' => $productId,
+                'qty'        => $qty,
+            ];
         }
 
         return $result;
@@ -141,24 +148,33 @@ class CheckoutController extends Controller
         logger('PRODUCT PRICE API SUCCESS', ['pricingData' => $pricingData]);
 
         $priceByProduct = [];
+
         foreach (($pricingData['data'] ?? []) as $row) {
-            if (!is_array($row) || empty($row['product_id'])) {
+            if (
+                !is_array($row) ||
+                empty($row['product_id']) ||
+                !isset($row['unit_price'])
+            ) {
                 continue;
             }
+
             $priceByProduct[(string) $row['product_id']] = $row;
-            // if (!is_array($row)) {
-            //     continue;
-            // }
-            // $productId = (string) ($row['product_id'] ?? '');
-            // if ($productId === '') {
-            //     continue;
-            // }
-            // $priceByProduct[$productId] = $row;
         }
+
+        // foreach (($pricingData['data'] ?? []) as $row) {
+        //     if (!is_array($row)) {
+        //         continue;
+        //     }
+        //     $productId = (string) ($row['product_id'] ?? '');
+        //     if ($productId === '') {
+        //         continue;
+        //     }
+        //     $priceByProduct[$productId] = $row;
+        // }
 
         return [
             'ok' => true,
-            'missing' => is_array($missing) ? $missing : [],
+            'missing' => $missing,
             'priceByProduct' => $priceByProduct,
         ];
     }
@@ -166,12 +182,21 @@ class CheckoutController extends Controller
     private function createCheckoutSessionAndItems(CheckoutService $service, array $items, array $priceByProduct, string $idempotencyHash): CheckoutSession
     {
         return DB::transaction(function () use ($service, $items, $priceByProduct, $idempotencyHash) {
+            
+            // Ensure single user per checkout
+            $userIds = array_unique(array_column($items, 'user_id'));
+            if (count($userIds) !== 1) {
+                throw new \RuntimeException('Multiple user IDs in checkout');
+            }
+
+            $userId = $userIds[0];
             // If two requests race, the unique index will reject one insert.
             $checkoutSession = $service->create([
                 'idempotency_key' => $idempotencyHash,
                 'status_id'       => OrderStatus::PENDING_STOCK->value,
-                'reservation_id' => (string) Str::uuid(),
-                'payment_id' => (string) Str::uuid(),
+                'user_id'         => $userId,
+                'reservation_id' => null,
+                'payment_id'     => null,
                 'correlation_id' => $idempotencyHash,
             ]);
 
