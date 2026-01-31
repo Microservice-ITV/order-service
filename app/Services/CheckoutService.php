@@ -7,10 +7,45 @@ use App\Enums\OrderStatus;
 use App\Models\CheckoutSession;
 use App\Models\Order;
 use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class CheckoutService
 {
-     public function create(array $attributes): CheckoutSession
+    /**
+     * Calculate the expiration datetime for a checkout session.
+     * Uses the configured expiration minutes from config.
+     */
+    public function calculateExpireAt(): Carbon
+    {
+        return now()
+            ->utc()
+            ->addMinutes((int) config('checkout.expire_after_minutes', 15));
+    }
+
+    /**
+     * Validate that a checkout session exists and is not expired.
+     * Returns the checkout session if valid, null otherwise.
+     */
+    public function validateCheckout(string $checkoutId): ?CheckoutSession
+    {
+        $checkout = CheckoutSession::find($checkoutId);
+
+        if (!$checkout) {
+            return null;
+        }
+
+        if ($checkout->isExpired()) {
+            logger()->warning(LogMessage::CHECKOUT_EXPIRED, [
+                'checkout_id' => $checkoutId,
+                'expire_at'   => $checkout->getExpireAtIso(),
+            ]);
+            return null;
+        }
+
+        return $checkout;
+    }
+
+    public function create(array $attributes): CheckoutSession
     {
         $checkout = CheckoutSession::create([
             'id'        => (string) Str::uuid(),

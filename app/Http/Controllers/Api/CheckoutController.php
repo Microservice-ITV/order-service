@@ -195,9 +195,10 @@ class CheckoutController extends Controller
                 'idempotency_key' => $idempotencyHash,
                 'status_id'       => OrderStatus::PENDING_STOCK->value,
                 'user_id'         => $userId,
-                'reservation_id' => null,
-                'payment_id'     => null,
-                'correlation_id' => $idempotencyHash,
+                'reservation_id'  => null,
+                'payment_id'      => null,
+                'correlation_id'  => $idempotencyHash,
+                'expire_at'       => $service->calculateExpireAt(),
             ]);
 
             /** ✅ BULK INSERT ITEMS */
@@ -266,6 +267,8 @@ class CheckoutController extends Controller
 
     private function publishOrderCheckoutEvent(string $checkoutId, array $items, string $correlationId): void
     {
+        $checkout = CheckoutSession::find($checkoutId);
+
         Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, [
             'event' => EventTopic::ORDER_CHECKOUT_REQUESTED->value,
             'version' => 'v1',
@@ -275,6 +278,7 @@ class CheckoutController extends Controller
             'data' => [
                 'checkout_id' => $checkoutId,
                 'items' => $items,
+                'expire_at' => $checkout?->getExpireAtIso(),
             ],
         ]);
         logger()->info('ORDER_CHECKOUT_REQUESTED EVENT PUBLISHED', [

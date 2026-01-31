@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Models\CheckoutItem;
+use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
@@ -42,14 +43,21 @@ class ConsumeProductValidated extends BaseConsumer
         }
 
         DB::transaction(function () use ($data, $checkoutId) {
+            $checkoutService = app(CheckoutService::class);
             
+            // Validate checkout exists and is not expired
+            $checkout = $checkoutService->validateCheckout($checkoutId);
+            if (!$checkout) {
+                logger()->warning(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                    'checkout_id' => $checkoutId,
+                    'reason'      => 'CHECKOUT_NOT_FOUND_OR_EXPIRED',
+                ]);
+                return;
+            }
+
             $total = $data['total'] ?? $this->calculateOrderTotal($checkoutId);
             $reservationId = $data['reservation_id'] ?? null;
             $correlationId = $data['correlation_id'] ?? null;
-
-            // if (!is_string($reservationId) || $reservationId === '') {
-            //     throw new \RuntimeException('Invalid reservation_id');
-            // }
 
             if (!is_string($reservationId) || $reservationId === '') {
                 logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
@@ -60,7 +68,7 @@ class ConsumeProductValidated extends BaseConsumer
                 throw new \RuntimeException('Invalid reservation_id');
             }
 
-            app(CheckoutService::class)->markStockConfirmed($checkoutId, $total, $reservationId);
+            $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
 
             logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
                 'checkout_id'    => $checkoutId,
@@ -77,6 +85,7 @@ class ConsumeProductValidated extends BaseConsumer
                     'checkout_id' => $checkoutId,
                     'reservation_id' => $reservationId,
                     'amount' => $total,
+                    'expire_at' => $checkout->getExpireAtIso(),
                 ],
             ]);
 
@@ -85,7 +94,7 @@ class ConsumeProductValidated extends BaseConsumer
                 'amount'      => $total,
             ]);
 
-            app(CheckoutService::class)->markPendingPayment($checkoutId);
+            $checkoutService->markPendingPayment($checkoutId);
 
             logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
                 'checkout_id' => $checkoutId,

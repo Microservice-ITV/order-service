@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Logging\LogMessage;
+use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
 use App\Services\OrderService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -52,18 +53,32 @@ class ConsumePaymentSucceeded extends BaseConsumer
         ]);
 
         try {
+            $checkoutService = app(CheckoutService::class);
+            $orderService = app(OrderService::class);
+
+            // Validate checkout exists and is not expired before processing payment
+            $checkout = $checkoutService->validateCheckout($checkoutId);
+            if (!$checkout) {
+                logger()->warning(LogMessage::PAYMENT_CONFIRM_IGNORED_INVALID_STATE, [
+                    'checkout_id' => $checkoutId,
+                    'reason'      => 'CHECKOUT_NOT_FOUND_OR_EXPIRED',
+                ]);
+                return;
+            }
+
             DB::transaction(function () use (
                 $checkoutId,
                 $paymentId,
                 $correlationId,
+                $checkoutService,
+                $orderService,
                 &$order
             ) {
                 /**
                  * Confirm checkout (IDEMPOTENT)
                  * - Must atomically check & update state
                  */
-                $confirmed = app(CheckoutService::class)
-                    ->confirm($checkoutId);
+                $confirmed = $checkoutService->confirm($checkoutId);
 
                 if (!$confirmed) {
                     logger()->warning(
@@ -76,7 +91,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 /**
                  *  Create order (idempotent by checkout_id UNIQUE)
                  */
-                $order = app(OrderService::class)->createOrder(
+                $order = $orderService->createOrder(
                     checkoutId: $checkoutId,
                     correlationId: $correlationId
                 );
@@ -85,7 +100,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                  * Attach payment (optional, idempotent)
                  */
                 if ($paymentId) {
-                    app(OrderService::class)->attachPayment(
+                    $orderService->attachPayment(
                         checkoutId: $checkoutId,
                         paymentId: $paymentId
                     );
@@ -118,6 +133,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                         'checkout_id'   => $checkoutId,
                         'payment_id'    => $paymentId,
                         'reservation_id'=> $order->reservation_id,
+                        'expire_at'     => $checkout->getExpireAtIso(),
                     ],
                 ]
             );
