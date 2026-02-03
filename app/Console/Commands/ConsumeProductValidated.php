@@ -4,10 +4,9 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Models\CheckoutItem;
-use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
+use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
-use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
 use App\Logging\LogMessage;
 
@@ -44,6 +43,7 @@ class ConsumeProductValidated extends BaseConsumer
 
         DB::transaction(function () use ($data, $checkoutId) {
             $checkoutService = app(CheckoutService::class);
+            $paymentService  = app(PaymentService::class);
             
             // Validate checkout exists and is not expired
             $checkout = $checkoutService->validateCheckout($checkoutId);
@@ -55,11 +55,11 @@ class ConsumeProductValidated extends BaseConsumer
                 return;
             }
 
-            $total = $data['total'] ?? $this->calculateOrderTotal($checkoutId);
-            $reservationId = $data['reservation_id'] ?? null;
-            $correlationId = $data['correlation_id'] ?? null;
+            $total = (float) ($data['total'] ?? $this->calculateOrderTotal($checkoutId));
+            $reservationId = (string) ($data['reservation_id'] ?? '');
+            $correlationId = (string) ($data['correlation_id'] ?? '');
 
-            if (!is_string($reservationId) || $reservationId === '') {
+            if ($reservationId === '') {
                 logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
                     'checkout_id' => $checkoutId,
                     'reason'      => 'INVALID_RESERVATION_ID',
@@ -75,26 +75,25 @@ class ConsumeProductValidated extends BaseConsumer
                 'reservation_id' => $reservationId,
             ]);
 
-            Publisher::publish(EventTopic::PAYMENT_REQUESTED, [
-                'event' => EventTopic::PAYMENT_REQUESTED->value,
-                'version' => 'v1',
-                'timestamp' => now()->utc()->toIso8601String(),
-                'producer' => 'order-service',
-                "correlation_id" => $correlationId,
-                'data' => [
-                    'checkout_id' => $checkoutId,
-                    'reservation_id' => $reservationId,
-                    'amount' => $total,
-                    'expire_at' => $checkout->getExpireAtIso(),
-                ],
-            ]);
+            // Create payment intent via REST API
+            $paymentIntent = $paymentService->createPaymentIntent(
+                checkoutId: $checkoutId,
+                reservationId: $reservationId,
+                amount: $total,
+                correlationId: $correlationId,
+                expireAtIso: $checkout->getExpireAtIso()
+            );
+
+            $paymentId    = (string) $paymentIntent['payment_id'];
+            $clientSecret = (string) $paymentIntent['client_secret'];
+
+            $checkoutService->attachPaymentIntent($checkoutId, $paymentId, $clientSecret);
+            $checkoutService->markPendingPayment($checkoutId);
 
             logger()->info(LogMessage::PAYMENT_REQUESTED_PUBLISHED, [
                 'checkout_id' => $checkoutId,
                 'amount'      => $total,
             ]);
-
-            $checkoutService->markPendingPayment($checkoutId);
 
             logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
                 'checkout_id' => $checkoutId,

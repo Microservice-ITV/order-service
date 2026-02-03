@@ -2,230 +2,32 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Enums\EventTopic;
-use App\Enums\OrderStatus;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\CheckoutRequest;
+use App\UseCases\Checkout\StartCheckout;
+use App\Exceptions\BusinessException;
 use App\Models\CheckoutSession;
-use App\Models\CheckoutItem;
-use App\Services\CheckoutService;
-use App\Services\RabbitMQ\Publisher;
-use Illuminate\Database\QueryException;
+use App\Enums\OrderStatus;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
 
 class CheckoutController extends Controller
 {
-    public function checkout(CheckoutService $service): JsonResponse
+    public function checkout(CheckoutRequest $request, StartCheckout $useCase): JsonResponse
     {
-        logger('CHECKOUT API HIT');
-
-        $items = $this->getCheckoutItems();
-        if ($items === []) {
-            logger('CART EMPTY');
-            return $this->errorResponse('Cart empty', 400);
-        }
-
-        $rawIdempotencyKey = $this->requireIdempotencyKey();
-        $idempotencyHash   = $this->hashIdempotencyKey($rawIdempotencyKey);
-
-        $existing = $this->findOrderByIdempotencyHash($idempotencyHash);
-        if ($existing) {
-            return $this->existingOrderResponse($existing);
-        }
-
-        $pricingData = $this->fetchPricingData($items);
-        if ($pricingData['ok'] !== true) {
-            return $this->errorResponse('Unable to fetch product prices', 502);
-        }
-        if ($pricingData['missing'] !== []) {
-            return $this->errorResponse('Some products are unavailable', 400, ['missing' => $pricingData['missing']]);
-        }
-
         try {
-            $checkout = $this->createCheckoutSessionAndItems($service, $items, $pricingData['priceByProduct'], $idempotencyHash);
-        } catch (QueryException $e) {
-            if ($this->isDuplicateKeyError($e)) {
-                $existing = $this->findOrderByIdempotencyHash($idempotencyHash);
-                if ($existing) {
-                    return $this->existingOrderResponse($existing);
-                }
-            }
-
-            throw $e;
+            $result = $useCase->handle(
+                items: $request->validated('items'),
+                rawIdempotencyKey: $request->validated('idempotency_key')
+            );
+        } catch (BusinessException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatus());
         }
 
-        logger('CHECKOUT SESSION CREATED', ['checkout_id' => $checkout->id]);
-
-        $this->publishOrderCheckoutEvent($checkout->id, $items, $idempotencyHash);
-        
-        return $this->successResponse($checkout->id);
-    }
-
-    private function getCheckoutItems(): array
-    {
-        $items = request()->input('items') ?? session('cart.items');
-
-        if (!is_array($items) || $items === []) {
-            return [];
+        if ($result->existing) {
+            return $this->existingOrderResponse($result->checkout);
         }
 
-        $result = [];
-        foreach ($items as $item) {
-
-            if (!is_array($item)) {
-                continue;
-            }
-
-            $productId = (string) ($item['product_id'] ?? '');
-            $userId    = (string) ($item['user_id'] ?? '');
-            $qty = (int) ($item['qty'] ?? 0);
-
-            if ($productId === '' || $userId === '' || $qty <= 0) {
-                continue;
-            }
-
-            $result[] = [
-                'user_id'    => $userId,
-                'product_id' => $productId,
-                'qty'        => $qty,
-            ];
-        }
-
-        return $result;
-    }
-
-    private function requireIdempotencyKey(): string
-    {
-        $key = trim((string) request()->header('Idempotency-Key'));
-
-        if ($key === '') {
-            abort(400, 'Idempotency-Key header is required');
-        }
-
-        return $key;
-    }
-    private function hashIdempotencyKey(string $raw): string
-    {
-        if (\strlen($raw) > 255) {
-            $raw = substr($raw, 0, 255);
-        }
-
-        return hash_hmac('sha256', $raw, (string) config('app.key'));
-    }
-
-    private function findOrderByIdempotencyHash(string $hash): ?CheckoutSession
-    {
-        // Extra 'and' keeps some PHP language servers happy with signature inference.
-        // return CheckoutSession::where('idempotency_key', '=', $hash, 'and')->first();
-        return CheckoutSession::where('idempotency_key', $hash)->first();
-    }
-
-    private function fetchPricingData(array $items): array
-    {
-        /** @var \Illuminate\Http\Client\Response $pricingResponse */
-        $pricingResponse = Http::timeout(3)->retry(2, 100)
-        ->withHeaders([
-            'Content-Type' => 'application/json',
-            'X-SERVICE-KEY' => config('services.product.api_key'),
-        ])->post(rtrim(config('services.product.url'), '/') . '/api/v1/products/prices', [
-            'items' => $items,
-        ]);
-
-        if (!$pricingResponse->ok() || !($pricingResponse->json('success') ?? false)) {
-            logger('PRODUCT PRICE API FAILED', [
-                'status' => $pricingResponse->status(),
-                'body' => $pricingResponse->json(),
-            ]);
-
-            return ['ok' => false, 'missing' => [], 'priceByProduct' => []];
-        }
-
-        $pricingData = $pricingResponse->json();
-        $missing = $pricingData['missing'] ?? [];
-
-        logger('PRODUCT PRICE API SUCCESS', ['pricingData' => $pricingData]);
-
-        $priceByProduct = [];
-
-        foreach (($pricingData['data'] ?? []) as $row) {
-            if (
-                !is_array($row) ||
-                empty($row['product_id']) ||
-                !isset($row['unit_price'])
-            ) {
-                continue;
-            }
-
-            $priceByProduct[(string) $row['product_id']] = $row;
-        }
-
-        // foreach (($pricingData['data'] ?? []) as $row) {
-        //     if (!is_array($row)) {
-        //         continue;
-        //     }
-        //     $productId = (string) ($row['product_id'] ?? '');
-        //     if ($productId === '') {
-        //         continue;
-        //     }
-        //     $priceByProduct[$productId] = $row;
-        // }
-
-        return [
-            'ok' => true,
-            'missing' => $missing,
-            'priceByProduct' => $priceByProduct,
-        ];
-    }
-
-    private function createCheckoutSessionAndItems(CheckoutService $service, array $items, array $priceByProduct, string $idempotencyHash): CheckoutSession
-    {
-        return DB::transaction(function () use ($service, $items, $priceByProduct, $idempotencyHash) {
-            
-            // Ensure single user per checkout
-            $userIds = array_unique(array_column($items, 'user_id'));
-            if (count($userIds) !== 1) {
-                throw new \RuntimeException('Multiple user IDs in checkout');
-            }
-
-            $userId = $userIds[0];
-            // If two requests race, the unique index will reject one insert.
-            $checkoutSession = $service->create([
-                'idempotency_key' => $idempotencyHash,
-                'status_id'       => OrderStatus::PENDING_STOCK->value,
-                'user_id'         => $userId,
-                'reservation_id'  => null,
-                'payment_id'      => null,
-                'correlation_id'  => $idempotencyHash,
-                'expire_at'       => $service->calculateExpireAt(),
-            ]);
-
-            /** ✅ BULK INSERT ITEMS */
-            $rows = [];
-            $now  = now();
-
-            foreach ($items as $item) {
-                $productId = $item['product_id'];
-
-                if (!isset($priceByProduct[$productId]['unit_price'])) {
-                    throw new \RuntimeException("Missing price for product {$productId}");
-                }
-
-                $rows[] = [
-                    'checkout_id' => $checkoutSession->id,
-                    'product_id'  => $productId,
-                    'qty'         => $item['qty'],
-                    'price'       => $priceByProduct[$productId]['unit_price'],
-                    'created_at'  => $now,
-                    'updated_at'  => $now,
-                ];
-            }
-            
-            CheckoutItem::insert($rows);
-
-            return $checkoutSession;
-        });
+        return $this->successResponse($result->checkout->id);
     }
 
     private function existingOrderResponse(CheckoutSession $checkout): JsonResponse
@@ -256,33 +58,5 @@ class CheckoutController extends Controller
             'error' => $message,
             ...$data,
         ], $status);
-    }
-
-    private function isDuplicateKeyError(QueryException $e): bool
-    {
-        // MySQL duplicate key error code.
-        $errorCode = (int) ($e->errorInfo[1] ?? 0);
-        return $errorCode === 1062;
-    }
-
-    private function publishOrderCheckoutEvent(string $checkoutId, array $items, string $correlationId): void
-    {
-        $checkout = CheckoutSession::find($checkoutId);
-
-        Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, [
-            'event' => EventTopic::ORDER_CHECKOUT_REQUESTED->value,
-            'version' => 'v1',
-            'timestamp' => now()->utc()->toIso8601String(),
-            'producer' => 'order-service',
-            "correlation_id" => $correlationId,
-            'data' => [
-                'checkout_id' => $checkoutId,
-                'items' => $items,
-                'expire_at' => $checkout?->getExpireAtIso(),
-            ],
-        ]);
-        logger()->info('ORDER_CHECKOUT_REQUESTED EVENT PUBLISHED', [
-            'checkout_id' => $checkoutId
-        ]);
     }
 }

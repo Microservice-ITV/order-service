@@ -13,12 +13,11 @@ class WebhookController extends Controller
     public function productValidated(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id' => 'required|string|uuid',
-            'total' => 'required|numeric',
-            'items' => 'required|array',
-            'items.*.product_id' => 'required|string|uuid',
-            'items.*.qty' => 'required|integer',
-            'items.*.price' => 'required|numeric',
+            'checkout_id'     => 'required|string|uuid',
+            'reservation_id'  => 'required|string',
+            'correlation_id'  => 'required|string',
+            'total'           => 'nullable|numeric',
+            'expire_at'       => 'nullable|date',
         ]);
 
         Publisher::publish(EventTopic::PRODUCT_VALIDATED, [
@@ -26,6 +25,7 @@ class WebhookController extends Controller
             'version' => 'v1',
             'timestamp' => now()->utc()->toIso8601String(),
             'producer' => 'order-service',
+            'correlation_id' => $validated['correlation_id'],
             'data' => $validated,
         ]);
 
@@ -38,7 +38,10 @@ class WebhookController extends Controller
     public function productRejected(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id' => 'required|string|uuid',
+            'checkout_id'    => 'required|string|uuid',
+            'correlation_id' => 'required|string',
+            'reason'         => 'nullable|string',
+            'expire_at'      => 'nullable|date',
         ]);
 
         Publisher::publish(EventTopic::PRODUCT_REJECTED, [
@@ -46,6 +49,7 @@ class WebhookController extends Controller
             'version' => 'v1',
             'timestamp' => now()->utc()->toIso8601String(),
             'producer' => 'order-service',
+            'correlation_id' => $validated['correlation_id'],
             'data' => $validated,
         ]);
 
@@ -58,7 +62,10 @@ class WebhookController extends Controller
     public function paymentSucceeded(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id' => 'required|string|uuid',
+            'checkout_id'    => 'required|string|uuid',
+            'payment_id'     => 'required|string',
+            'correlation_id' => 'required|string',
+            'expire_at'      => 'nullable|date',
         ]);
 
         Publisher::publish(EventTopic::PAYMENT_SUCCEEDED, [
@@ -66,6 +73,7 @@ class WebhookController extends Controller
             'version' => 'v1',
             'timestamp' => now()->utc()->toIso8601String(),
             'producer' => 'order-service',
+            'correlation_id' => $validated['correlation_id'],
             'data' => $validated,
         ]);
 
@@ -78,7 +86,10 @@ class WebhookController extends Controller
     public function paymentFailed(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id' => 'required|string|uuid',
+            'checkout_id'    => 'required|string|uuid',
+            'correlation_id' => 'required|string',
+            'reason'         => 'nullable|string',
+            'expire_at'      => 'nullable|date',
         ]);
 
         Publisher::publish(EventTopic::PAYMENT_FAILED, [
@@ -86,6 +97,7 @@ class WebhookController extends Controller
             'version' => 'v1',
             'timestamp' => now()->utc()->toIso8601String(),
             'producer' => 'order-service',
+            'correlation_id' => $validated['correlation_id'],
             'data' => $validated,
         ]);
 

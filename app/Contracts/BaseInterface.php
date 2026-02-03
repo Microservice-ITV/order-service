@@ -33,7 +33,7 @@ interface BaseInterface
 {
     public function create(array $data);
     public function all();
-    public function update(int $id, array $data);
-    public function delete(int $id);
-    public function findById(int $id): ?Model;
+    public function update(string|int $id, array $data);
+    public function delete(string|int $id);
+    public function findById(string|int $id): ?Model;
 }

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Logging\LogMessage;
 use App\Enums\OrderStatus;
+use App\Contracts\CheckoutSessionInterface;
 use App\Models\CheckoutSession;
 use App\Models\Order;
 use Illuminate\Support\Str;
@@ -11,6 +12,10 @@ use Carbon\Carbon;
 
 class CheckoutService
 {
+    public function __construct(
+        private readonly CheckoutSessionInterface $checkoutSessions
+    ) {}
+
     /**
      * Calculate the expiration datetime for a checkout session.
      * Uses the configured expiration minutes from config.
@@ -23,12 +28,40 @@ class CheckoutService
     }
 
     /**
+     * Hash an idempotency key for secure storage.
+     * Truncates keys longer than 255 characters and hashes using app key.
+     */
+    public function hashIdempotencyKey(string $rawKey): string
+    {
+        if (\strlen($rawKey) > 255) {
+            $rawKey = substr($rawKey, 0, 255);
+        }
+
+        return hash_hmac('sha256', $rawKey, (string) config('app.key'));
+    }
+
+    /**
+     * Find a checkout session by its idempotency key hash.
+     * Returns the checkout session if found, null otherwise.
+     */
+    public function findByIdempotencyHash(string $hash): ?CheckoutSession
+    {
+        return $this->checkoutSessions->findByIdempotencyHash($hash);
+    }
+
+    public function findById(string $checkoutId): ?CheckoutSession
+    {
+        return $this->checkoutSessions->findById($checkoutId);
+    }
+
+    /**
      * Validate that a checkout session exists and is not expired.
      * Returns the checkout session if valid, null otherwise.
      */
     public function validateCheckout(string $checkoutId): ?CheckoutSession
     {
-        $checkout = CheckoutSession::find($checkoutId);
+        /** @var ?CheckoutSession $checkout */
+        $checkout = $this->checkoutSessions->findById($checkoutId);
 
         if (!$checkout) {
             return null;
@@ -47,7 +80,8 @@ class CheckoutService
 
     public function create(array $attributes): CheckoutSession
     {
-        $checkout = CheckoutSession::create([
+        /** @var CheckoutSession $checkout */
+        $checkout = $this->checkoutSessions->create([
             'id'        => (string) Str::uuid(),
             'status_id' => OrderStatus::PENDING_STOCK,
             ...$attributes,
@@ -63,10 +97,10 @@ class CheckoutService
 
     public function reject(string $checkoutId, ?string $reason = null): bool
     {
-        $updated = CheckoutSession::query()
-            ->where('id', $checkoutId)
-            ->where('status_id', OrderStatus::PENDING_STOCK->value)
-            ->update([
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+            ['status_id', '=', OrderStatus::PENDING_STOCK->value],
+        ], [
                 'status_id'      => OrderStatus::FAILED_STOCK->value,
                 'failure_reason' => $reason,
                 'updated_at'     => now(),
@@ -90,10 +124,10 @@ class CheckoutService
 
     public function markStockConfirmed(string $checkoutId, float $total, string $reservationId): bool
     {
-        $updated = CheckoutSession::query()
-            ->where('id', $checkoutId)
-            ->where('status_id', OrderStatus::PENDING_STOCK->value)
-            ->update([
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+            ['status_id', '=', OrderStatus::PENDING_STOCK->value],
+        ], [
                 'status_id' => OrderStatus::STOCK_CONFIRMED->value,
                 'total' => $total,
                 'reservation_id' => $reservationId,
@@ -120,10 +154,10 @@ class CheckoutService
 
     public function markPendingPayment(string $checkoutId): bool
     {
-        $updated = CheckoutSession::query()
-            ->where('id', $checkoutId)
-            ->where('status_id', OrderStatus::STOCK_CONFIRMED->value)
-            ->update([
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+            ['status_id', '=', OrderStatus::STOCK_CONFIRMED->value],
+        ], [
                 'status_id' => OrderStatus::PENDING_PAYMENT->value,
                 'updated_at' => now(),
             ]);
@@ -139,10 +173,10 @@ class CheckoutService
 
     public function confirm(string $checkoutId): bool
     {
-        $updated = CheckoutSession::query()
-            ->where('id', $checkoutId)
-            ->where('status_id', OrderStatus::PENDING_PAYMENT->value)
-            ->update([
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+            ['status_id', '=', OrderStatus::PENDING_PAYMENT->value],
+        ], [
                 'status_id' => OrderStatus::PAID->value,
                 'updated_at' => now(),
             ]);
@@ -154,6 +188,22 @@ class CheckoutService
             }
     
             return $updated === 1;
+    }
+
+    /**
+     * Attach payment intent metadata (payment_id + client_secret) to checkout session.
+     */
+    public function attachPaymentIntent(string $checkoutId, string $paymentId, string $clientSecret): bool
+    {
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+        ], [
+            'payment_id'    => $paymentId,
+            'client_secret' => $clientSecret,
+            'updated_at'    => now(),
+        ]);
+
+        return $updated === 1;
     }
 
     public function createFromCheckout( string $checkoutId, string $correlationId, ?string $reservationId = null): Order 
@@ -169,10 +219,10 @@ class CheckoutService
 
     public function fail(string $checkoutId, ?string $reason = null): bool
     {
-        $updated = CheckoutSession::query()
-            ->where('id', $checkoutId)
-            ->where('status_id', OrderStatus::PENDING_PAYMENT->value)
-            ->update([
+        $updated = $this->checkoutSessions->updateWhere([
+            ['id', '=', $checkoutId],
+            ['status_id', '=', OrderStatus::PENDING_PAYMENT->value],
+        ], [
                 'status_id' => OrderStatus::FAILED_PAYMENT->value,
                 'failure_reason' => $reason,
                 'updated_at'     => now(),

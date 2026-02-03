@@ -44,4 +44,9 @@ return [
         'api_key' => env('PRODUCT_SERVICE_API_KEY'),
     ],
 
+    'payment' => [
+        'url' => env('PAYMENT_SERVICE_URL'),
+        'api_key' => env('PAYMENT_SERVICE_API_KEY'),
+    ],
+
 ];

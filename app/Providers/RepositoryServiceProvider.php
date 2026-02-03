@@ -3,7 +3,10 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Str;
+use App\Contracts\CheckoutItemInterface;
+use App\Contracts\CheckoutSessionInterface;
+use App\Repositories\CheckoutItemRepository;
+use App\Repositories\CheckoutSessionRepository;
 
 class RepositoryServiceProvider extends ServiceProvider
 {
@@ -12,33 +15,12 @@ class RepositoryServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $contractsPath = app_path('Contracts');
+        // Explicit bindings (faster and more predictable than filesystem scanning).
+        $this->app->bind(CheckoutSessionInterface::class, CheckoutSessionRepository::class);
+        $this->app->bind(CheckoutItemInterface::class, CheckoutItemRepository::class);
 
-        foreach (glob($contractsPath . '/*.php') as $file) {
-
-            // CartInterface.php → CartInterface
-            $interfaceName = pathinfo($file, PATHINFO_FILENAME);
-
-            // Skip BaseInterface
-            if ($interfaceName === 'BaseInterface') {
-                continue;
-            }
-
-            $interface = "App\\Contracts\\{$interfaceName}";
-
-            if (!interface_exists($interface)) {
-                continue;
-            }
-
-            // CartInterface → CartRepository
-            $repositoryName = Str::replaceLast('Interface', 'Repository', $interfaceName);
-
-            $implementation = "App\\Repositories\\{$repositoryName}";
-
-            if (class_exists($implementation)) {
-                $this->app->bind($interface, $implementation);
-            }
-        }
+        // If you later add many interfaces/repositories and want auto-binding,
+        // you can reintroduce the scanning approach here.
     }
 
     /**

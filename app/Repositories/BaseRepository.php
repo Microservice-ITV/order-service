@@ -42,7 +42,7 @@ abstract class BaseRepository implements BaseInterface
         }
     }
 
-    public function findById(int $id): ?Model
+    public function findById(string|int $id): ?Model
     {
         try {
             return $this->model->find($id);
@@ -68,7 +68,7 @@ abstract class BaseRepository implements BaseInterface
         }
     }
 
-    public function update(int $id, array $data)
+    public function update(string|int $id, array $data)
     {
         try {
             $record = $this->model->findOrFail($id);
@@ -84,7 +84,7 @@ abstract class BaseRepository implements BaseInterface
         }
     }
 
-    public function delete(int $id)
+    public function delete(string|int $id)
     {
         try {
             $record = $this->model->findOrFail($id);

@@ -31,6 +31,7 @@ class CheckoutSession extends Model
         'correlation_id',
         'reservation_id',
         'payment_id',
+        'client_secret',
         'expire_at',
     ];
 

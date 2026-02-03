@@ -2,11 +2,13 @@
 
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\WebhookController;
+use App\Http\Controllers\Api\CheckoutSessionController;
 use Illuminate\Support\Facades\Route;
 
 // Order Management Routes
 Route::controller(CheckoutController::class)->prefix('orders')->group(function () {
     Route::post('/checkout', 'checkout')->name('orders.checkout');
+    Route::get('/checkout-sessions/{checkout_id}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');
 });
 
 // Webhook Routes (Event simulation from other microservices)
