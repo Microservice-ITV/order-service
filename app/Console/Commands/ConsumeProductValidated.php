@@ -58,6 +58,16 @@ class ConsumeProductValidated extends BaseConsumer
             $total = (float) ($data['total'] ?? $this->calculateOrderTotal($checkoutId));
             $reservationId = (string) ($data['reservation_id'] ?? '');
             $correlationId = (string) ($data['correlation_id'] ?? '');
+            if ($correlationId === '') {
+                $correlationId = (string) ($checkout->correlation_id ?? '');
+            }
+            if ($correlationId === '') {
+                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                    'checkout_id' => $checkoutId,
+                    'reason'      => 'MISSING_CORRELATION_ID',
+                ]);
+                throw new \RuntimeException('Missing correlation_id');
+            }
 
             if ($reservationId === '') {
                 logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
@@ -76,24 +86,34 @@ class ConsumeProductValidated extends BaseConsumer
             ]);
 
             // Create payment intent via REST API
+            $expireAtIso = $checkout->getExpireAtIso();
+            if ($expireAtIso === null) {
+                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                    'checkout_id' => $checkoutId,
+                    'reason'      => 'MISSING_EXPIRE_AT',
+                ]);
+                throw new \RuntimeException('Missing expire_at');
+            }
+
             $paymentIntent = $paymentService->createPaymentIntent(
                 checkoutId: $checkoutId,
                 reservationId: $reservationId,
                 amount: $total,
                 correlationId: $correlationId,
-                expireAtIso: $checkout->getExpireAtIso()
+                expireAtIso: $expireAtIso
             );
 
             $paymentId    = (string) $paymentIntent['payment_id'];
             $clientSecret = (string) $paymentIntent['client_secret'];
 
-            $checkoutService->attachPaymentIntent($checkoutId, $paymentId, $clientSecret);
+            logger()->info("PAYMENT_INTENT_API_RESPONSE", [
+                'payment_id' => $paymentId,
+                'client_secret' => $clientSecret,
+            ]);
+
+            $checkoutService->updatePaymentIntent($checkoutId, $paymentId, $clientSecret);
             $checkoutService->markPendingPayment($checkoutId);
 
-            logger()->info(LogMessage::PAYMENT_REQUESTED_PUBLISHED, [
-                'checkout_id' => $checkoutId,
-                'amount'      => $total,
-            ]);
 
             logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
                 'checkout_id' => $checkoutId,

@@ -29,6 +29,16 @@ class OrderService
             ]) === 1;
     }
 
+    public function markPaid(string $checkoutId): bool
+    {
+        return Order::query()
+            ->where('checkout_id', $checkoutId)
+            ->update([
+                'status_id' => OrderStatus::PAID->value,
+                'updated_at' => now(),
+            ]) === 1;
+    }
+
     public function cancel(string $checkoutId): bool
     {
         return Order::query()

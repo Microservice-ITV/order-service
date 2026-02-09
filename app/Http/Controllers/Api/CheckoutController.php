@@ -17,17 +17,18 @@ class CheckoutController extends Controller
         try {
             $result = $useCase->handle(
                 items: $request->validated('items'),
+                userId: $request->validated('user_id'),
                 rawIdempotencyKey: $request->validated('idempotency_key')
             );
         } catch (BusinessException $e) {
-            return $this->errorResponse($e->getMessage(), $e->getStatus());
+            return $this->errorResponse($e->getMessage(), $e->getStatus(), $e->getData());
         }
 
         if ($result->existing) {
             return $this->existingOrderResponse($result->checkout);
         }
 
-        return $this->successResponse($result->checkout->id);
+        return $this->successResponse($result->checkout->id, $result->checkout->getExpireAtIso());
     }
 
     private function existingOrderResponse(CheckoutSession $checkout): JsonResponse
@@ -44,11 +45,12 @@ class CheckoutController extends Controller
     }
 
 
-    private function successResponse(string $checkoutId): JsonResponse
+    private function successResponse(string $checkoutId, ?string $expireAt): JsonResponse
     {
         return response()->json([
             'checkout_id' => $checkoutId,
             'message' => 'Order received and we are processing your order',
+            'expire_at' => $expireAt,
         ]);
     }
 

@@ -28,6 +28,7 @@ class CheckoutSession extends Model
         'total',
         'failure_reason',
         'idempotency_key',
+        'user_id',
         'correlation_id',
         'reservation_id',
         'payment_id',

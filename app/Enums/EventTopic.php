@@ -9,9 +9,9 @@ enum EventTopic: string
     case PRODUCT_REJECTED = 'product.stock.rejected';
     
     case PAYMENT_REQUESTED = 'payment.requested';
-    case PAYMENT_SUCCEEDED = 'payment.success';
+    case PAYMENT_COMPLETED = 'payment.completed';
     case PAYMENT_FAILED = 'payment.failed';
 
-    case ORDER_SUCCEEDED = 'order.success';
+    case ORDER_COMPLETED = 'order.completed';
     case ORDER_FAILED = 'order.failed';
 }

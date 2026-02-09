@@ -193,7 +193,7 @@ class CheckoutService
     /**
      * Attach payment intent metadata (payment_id + client_secret) to checkout session.
      */
-    public function attachPaymentIntent(string $checkoutId, string $paymentId, string $clientSecret): bool
+    public function updatePaymentIntent(string $checkoutId, string $paymentId, string $clientSecret): bool
     {
         $updated = $this->checkoutSessions->updateWhere([
             ['id', '=', $checkoutId],
@@ -205,6 +205,7 @@ class CheckoutService
 
         return $updated === 1;
     }
+
 
     public function createFromCheckout( string $checkoutId, string $correlationId, ?string $reservationId = null): Order 
     {

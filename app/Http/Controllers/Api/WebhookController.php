@@ -68,8 +68,8 @@ class WebhookController extends Controller
             'expire_at'      => 'nullable|date',
         ]);
 
-        Publisher::publish(EventTopic::PAYMENT_SUCCEEDED, [
-            'event' => EventTopic::PAYMENT_SUCCEEDED->value,
+        Publisher::publish(EventTopic::PAYMENT_COMPLETED, [
+            'event' => EventTopic::PAYMENT_COMPLETED->value,
             'version' => 'v1',
             'timestamp' => now()->utc()->toIso8601String(),
             'producer' => 'order-service',

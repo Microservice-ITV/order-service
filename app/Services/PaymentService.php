@@ -25,6 +25,19 @@ final class PaymentService
     ): array {
         $baseUrl = rtrim((string) config('services.payment.url'), '/');
 
+        $payload = [
+            'checkout_id'    => $checkoutId,
+            'reservation_id' => $reservationId,
+            'amount'         => $amount,
+            'correlation_id' => $correlationId,
+            'expire_at'      => $expireAtIso,
+        ];
+
+        logger()->info('PAYMENT_INTENT_REQUEST', [
+            'url' => $baseUrl . '/api/v1/payments/intents',
+            'payload' => $payload,
+        ]);
+
         /** @var \Illuminate\Http\Client\Response $response */
         $response = Http::timeout(5)
             ->retry(2, 200)
@@ -32,25 +45,30 @@ final class PaymentService
                 'Content-Type'  => 'application/json',
                 'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
             ])
-            ->post($baseUrl . '/api/v1/payments/intents', [
-                'checkout_id'    => $checkoutId,
-                'reservation_id' => $reservationId,
-                'amount'         => $amount,
-                'correlation_id' => $correlationId,
-                'expire_at'      => $expireAtIso,
-            ]);
+            ->post($baseUrl . '/api/v1/payments/intents', $payload);
 
-        if (!$response->ok()) {
+        if (!$response->successful()) {
+            logger()->error('PAYMENT_INTENT_REQUEST_FAILED', [
+                'status' => $response->status(),
+                'body' => $response->json(),
+            ]);
             throw new \RuntimeException('Failed to create payment intent');
         }
 
-        $data = $response->json();
+        $responseData = $response->json();
+        $payload = is_array($responseData) ? ($responseData['data'] ?? null) : null;
 
-        if (!is_array($data) || empty($data['payment_id']) || empty($data['client_secret'])) {
+        if (!is_array($payload) || empty($payload['paymentId']) || empty($payload['clientSecret'])) {
+            logger()->error('PAYMENT_INTENT_INVALID_RESPONSE', [
+                'body' => $responseData,
+            ]);
             throw new \RuntimeException('Invalid payment intent response');
         }
 
-        return $data;
+        return [
+            'payment_id' => $payload['paymentId'],
+            'client_secret' => $payload['clientSecret'],
+        ];
     }
 }
 

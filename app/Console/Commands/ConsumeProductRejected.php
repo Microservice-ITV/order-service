@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
+use App\Enums\OrderStatus;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Logging\LogMessage;
@@ -40,7 +41,17 @@ class ConsumeProductRejected extends BaseConsumer
 
         $reason = $data['reason'] ?? 'PRODUCT_VALIDATION_FAILED';
 
-        match (app(CheckoutService::class)->reject($checkoutId, $reason)) {
+        $checkoutService = app(CheckoutService::class);
+        $checkout = $checkoutService->findById($checkoutId);
+        if ($checkout && in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
+            logger()->info(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
+                'checkout_id' => $checkoutId,
+                'status'      => $checkout->status_id->name,
+            ]);
+            return;
+        }
+
+        match ($checkoutService->reject($checkoutId, $reason)) {
             true => logger()->info(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
                 'checkout_id' => $checkoutId,
                 'reason'      => $reason,

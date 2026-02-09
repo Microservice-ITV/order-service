@@ -8,7 +8,7 @@ use App\Enums\OrderStatus;
 use App\Exceptions\BusinessException;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
-use App\Services\ProductPricingService;
+use App\Services\ProductValidationAndPricingService;
 use App\Services\RabbitMQ\Publisher;
 use App\Contracts\CheckoutItemInterface;
 use Illuminate\Database\QueryException;
@@ -19,10 +19,10 @@ final class StartCheckout
     public function __construct(
         private readonly CheckoutService $checkoutService,
         private readonly CheckoutItemInterface $checkoutItems,
-        private readonly ProductPricingService $pricingService
+        private readonly ProductValidationAndPricingService $pricingService
     ) {}
 
-    public function handle(array $items, string $rawIdempotencyKey): StartCheckoutResult
+    public function handle(array $items, string $userId, string $rawIdempotencyKey): StartCheckoutResult
     {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -35,19 +35,24 @@ final class StartCheckout
             return new StartCheckoutResult($existing, true);
         }
 
-        // Pricing via Product service (recommended – server-trusted prices).
-        $pricingData = $this->pricingService->fetchPricingData($items);
-        if ($pricingData['ok'] !== true) {
-            throw new BusinessException('Unable to fetch product prices', 502);
+        // Stock validation + pricing via Product service (server-trusted).
+        $validationData = $this->pricingService->validateStockAndFetchPricing($items);
+        if ($validationData['ok'] !== true) {
+            throw new BusinessException('Unable to validate product stock', 502);
         }
-        if (($pricingData['missing'] ?? []) !== []) {
-            throw new BusinessException('Some products are unavailable', 400);
+        if ($validationData['stockValid'] !== true) {
+            $invalidItems = array_values(array_filter(
+                $validationData['items'] ?? [],
+                static fn ($row) => !is_array($row) || !($row['stock_validation'] ?? false)
+            ));
+            throw new BusinessException('OUT_OF_STOCK', 400, ['items' => $invalidItems]);
         }
 
         try {
             $checkout = $this->createCheckoutSessionAndItems(
                 items: $items,
-                priceByProduct: $pricingData['priceByProduct'],
+                priceByProduct: $validationData['priceByProduct'],
+                userId: $userId,
                 idempotencyHash: $idempotencyHash
             );
         } catch (QueryException $e) {
@@ -67,15 +72,9 @@ final class StartCheckout
         return new StartCheckoutResult($checkout, false);
     }
 
-    private function createCheckoutSessionAndItems(array $items, array $priceByProduct, string $idempotencyHash): CheckoutSession
+    private function createCheckoutSessionAndItems(array $items, array $priceByProduct, string $userId, string $idempotencyHash): CheckoutSession
     {
-        return DB::transaction(function () use ($items, $priceByProduct, $idempotencyHash) {
-            $userIds = array_unique(array_column($items, 'user_id'));
-            if (count($userIds) !== 1) {
-                throw new BusinessException('Multiple user IDs in checkout', 400);
-            }
-
-            $userId = (string) $userIds[0];
+        return DB::transaction(function () use ($items, $priceByProduct, $idempotencyHash, $userId) {
             $now = now();
 
             $checkoutSession = $this->checkoutService->create([
@@ -113,7 +112,7 @@ final class StartCheckout
 
     private function publishOrderCheckoutEvent(CheckoutSession $checkout, array $items, string $correlationId): void
     {
-        Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, [
+        $payload = [
             'event'          => EventTopic::ORDER_CHECKOUT_REQUESTED->value,
             'version'        => 'v1',
             'timestamp'      => now()->utc()->toIso8601String(),
@@ -122,8 +121,15 @@ final class StartCheckout
             'data' => [
                 'checkout_id' => $checkout->id,
                 'items'       => $items,
-                'expire_at'   => $checkout->getExpireAtIso(),
+                'expires_at'   => $checkout->getExpireAtIso(),
             ],
+        ];
+
+        Publisher::publish(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
+
+        logger()->info('ORDER_CHECKOUT_REQUESTED EVENT PUBLISHED', [
+            'checkout_id' => $checkout->id,
+            'payload' => $payload,
         ]);
     }
 }
