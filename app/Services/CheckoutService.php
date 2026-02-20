@@ -2,18 +2,27 @@
 
 namespace App\Services;
 
-use App\Logging\LogMessage;
-use App\Enums\OrderStatus;
+use App\Contracts\CheckoutItemInterface;
 use App\Contracts\CheckoutSessionInterface;
+use App\Enums\EventTopic;
+use App\Enums\OrderStatus;
+use App\Exceptions\BusinessException;
+use App\Logging\LogMessage;
+use App\Services\EventPayloadBuilder;
 use App\Models\CheckoutSession;
-use App\Models\Order;
-use Illuminate\Support\Str;
+use App\Services\ProductValidationAndPricingService;
+use App\Services\RabbitMQ\Publisher;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class CheckoutService
 {
     public function __construct(
-        private readonly CheckoutSessionInterface $checkoutSessions
+        private readonly CheckoutSessionInterface $checkoutSessions,
+        private readonly CheckoutItemInterface $checkoutItems,
+        private readonly ProductValidationAndPricingService $pricingService
     ) {}
 
     /**
@@ -97,97 +106,62 @@ class CheckoutService
 
     public function reject(string $checkoutId, ?string $reason = null): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-            ['status_id', '=', OrderStatus::PENDING_STOCK->value],
-        ], [
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::PENDING_STOCK,
+            [
                 'status_id'      => OrderStatus::FAILED_STOCK->value,
                 'failure_reason' => $reason,
                 'updated_at'     => now(),
-            ]);
-
-            if ($updated === 1) {
-                logger()->info(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => $reason,
-                ]);
-                return true;
-            }
-    
-            logger()->warning(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
-                'checkout_id' => $checkoutId,
-            ]);
-    
-            return false;
+            ],
+            LogMessage::CHECKOUT_REJECTED_STOCK_FAILED,
+            ['reason' => $reason]
+        );
     }
-
 
     public function markStockConfirmed(string $checkoutId, float $total, string $reservationId): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-            ['status_id', '=', OrderStatus::PENDING_STOCK->value],
-        ], [
-                'status_id' => OrderStatus::STOCK_CONFIRMED->value,
-                'total' => $total,
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::PENDING_STOCK,
+            [
+                'status_id'     => OrderStatus::STOCK_CONFIRMED->value,
+                'total'         => $total,
                 'reservation_id' => $reservationId,
                 'updated_at'    => now(),
-            ]);
-
-            if ($updated === 1) {
-                logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
-                    'checkout_id'    => $checkoutId,
-                    'total'          => $total,
-                    'reservation_id' => $reservationId,
-                ]);
-                return true;
-            }
-    
-            logger()->debug(LogMessage::CHECKOUT_STATE_STOCK_IGNORED, [
-                'checkout_id' => $checkoutId,
-                'from'        => OrderStatus::PENDING_STOCK->name,
-                'to'          => OrderStatus::STOCK_CONFIRMED->name,
-            ]);
-    
-            return false;
+            ],
+            LogMessage::CHECKOUT_STOCK_CONFIRMED,
+            ['total' => $total, 'reservation_id' => $reservationId],
+            LogMessage::CHECKOUT_STATE_STOCK_IGNORED,
+            ['from' => OrderStatus::PENDING_STOCK->name, 'to' => OrderStatus::STOCK_CONFIRMED->name],
+            'debug'
+        );
     }
 
     public function markPendingPayment(string $checkoutId): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-            ['status_id', '=', OrderStatus::STOCK_CONFIRMED->value],
-        ], [
-                'status_id' => OrderStatus::PENDING_PAYMENT->value,
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::STOCK_CONFIRMED,
+            [
+                'status_id'  => OrderStatus::PENDING_PAYMENT->value,
                 'updated_at' => now(),
-            ]);
-
-            if ($updated === 1) {
-                logger()->info(LogMessage::CHECKOUT_MOVED_TO_PENDING_PAYMENT, [
-                    'checkout_id' => $checkoutId,
-                ]);
-            }
-    
-            return $updated === 1;
+            ],
+            LogMessage::CHECKOUT_MOVED_TO_PENDING_PAYMENT
+        );
     }
 
     public function confirm(string $checkoutId): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-            ['status_id', '=', OrderStatus::PENDING_PAYMENT->value],
-        ], [
-                'status_id' => OrderStatus::PAID->value,
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::PENDING_PAYMENT,
+            [
+                'status_id'  => OrderStatus::PAID->value,
                 'updated_at' => now(),
-            ]);
-
-            if ($updated === 1) {
-                logger()->info(LogMessage::CHECKOUT_PAYMENT_CONFIRMED, [
-                    'checkout_id' => $checkoutId,
-                ]);
-            }
-    
-            return $updated === 1;
+            ],
+            LogMessage::CHECKOUT_PAYMENT_CONFIRMED
+        );
     }
 
     /**
@@ -195,47 +169,173 @@ class CheckoutService
      */
     public function updatePaymentIntent(string $checkoutId, string $paymentId, string $clientSecret): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-        ], [
-            'payment_id'    => $paymentId,
-            'client_secret' => $clientSecret,
-            'updated_at'    => now(),
-        ]);
+        $updated = $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'payment_id'    => $paymentId,
+                'client_secret' => $clientSecret,
+                'updated_at'    => now(),
+            ]
+        );
 
         return $updated === 1;
     }
 
-
-    public function createFromCheckout( string $checkoutId, string $correlationId, ?string $reservationId = null): Order 
-    {
-        return Order::create([
-            'order_id'       => (string) Str::uuid(),
-            'checkout_id'    => $checkoutId,
-            'reservation_id' => $reservationId,
-            'status_id'      => OrderStatus::CONFIRMED->value,
-            'correlation_id' => $correlationId,
-        ]);
-    }
-
     public function fail(string $checkoutId, ?string $reason = null): bool
     {
-        $updated = $this->checkoutSessions->updateWhere([
-            ['id', '=', $checkoutId],
-            ['status_id', '=', OrderStatus::PENDING_PAYMENT->value],
-        ], [
-                'status_id' => OrderStatus::FAILED_PAYMENT->value,
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::PENDING_PAYMENT,
+            [
+                'status_id'      => OrderStatus::FAILED_PAYMENT->value,
                 'failure_reason' => $reason,
                 'updated_at'     => now(),
+            ],
+            LogMessage::CHECKOUT_PAYMENT_FAILED,
+            ['reason' => $reason]
+        );
+    }
+
+    /**
+     * Atomically transition checkout status. Returns true only if exactly one row was updated.
+     */
+    private function transitionStatus(
+        string $checkoutId,
+        OrderStatus $fromStatus,
+        array $toData,
+        string $successLogMessage,
+        array $successLogContext = [],
+        string $ignoredLogMessage = LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE,
+        array $ignoredLogContext = [],
+        string $ignoredLogLevel = 'warning'
+    ): bool {
+        $updated = $this->checkoutSessions->updateWhere(
+            [
+                ['id', '=', $checkoutId],
+                ['status_id', '=', $fromStatus->value],
+            ],
+            $toData
+        );
+
+        if ($updated === 1) {
+            logger()->info($successLogMessage, array_merge(['checkout_id' => $checkoutId], $successLogContext));
+            return true;
+        }
+
+        $context = array_merge(['checkout_id' => $checkoutId], $ignoredLogContext);
+        match ($ignoredLogLevel) {
+            'debug' => logger()->debug($ignoredLogMessage, $context),
+            default => logger()->warning($ignoredLogMessage, $context),
+        };
+
+        return false;
+    }
+
+    /**
+     * Start checkout: validate stock, create session + items, publish event.
+     * Returns ['checkout' => CheckoutSession, 'existing' => bool].
+     *
+     * @throws BusinessException
+     */
+    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey): array
+    {
+        if ($items === []) {
+            throw new BusinessException('Cart empty', 400);
+        }
+
+        $idempotencyHash = $this->hashIdempotencyKey($rawIdempotencyKey);
+
+        $existing = $this->findByIdempotencyHash($idempotencyHash);
+        if ($existing) {
+            return ['checkout' => $existing, 'existing' => true];
+        }
+
+        $validationData = $this->pricingService->validateStockAndFetchPricing($items);
+        if ($validationData['ok'] !== true) {
+            throw new BusinessException('Unable to validate product stock', 502);
+        }
+        if ($validationData['stockValid'] !== true) {
+            $invalidItems = array_values(array_filter(
+                $validationData['items'] ?? [],
+                static fn ($row) => !is_array($row) || !($row['stock_validation'] ?? false)
+            ));
+            throw new BusinessException('OUT_OF_STOCK', 400, ['items' => $invalidItems]);
+        }
+
+        try {
+            $checkout = $this->createCheckoutSessionAndItems(
+                items: $items,
+                priceByProduct: $validationData['priceByProduct'],
+                userId: $userId,
+                idempotencyHash: $idempotencyHash
+            );
+        } catch (QueryException $e) {
+            $errorCode = (int) ($e->errorInfo[1] ?? 0);
+            if ($errorCode === 1062) {
+                $existing = $this->findByIdempotencyHash($idempotencyHash);
+                if ($existing) {
+                    return ['checkout' => $existing, 'existing' => true];
+                }
+            }
+            throw $e;
+        }
+
+        $this->publishOrderCheckoutEvent($checkout, $items, $idempotencyHash);
+
+        return ['checkout' => $checkout, 'existing' => false];
+    }
+
+    private function createCheckoutSessionAndItems(array $items, array $priceByProduct, string $userId, string $idempotencyHash): CheckoutSession
+    {
+        return DB::transaction(function () use ($items, $priceByProduct, $idempotencyHash, $userId) {
+            $now = now();
+
+            $checkoutSession = $this->create([
+                'idempotency_key' => $idempotencyHash,
+                'status_id'       => OrderStatus::PENDING_STOCK->value,
+                'user_id'         => $userId,
+                'reservation_id'  => null,
+                'payment_id'      => null,
+                'correlation_id'  => $idempotencyHash,
+                'expire_at'       => $this->calculateExpireAt(),
             ]);
 
-            if ($updated === 1) {
-                logger()->info(LogMessage::CHECKOUT_PAYMENT_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => $reason,
-                ]);
+            $rows = [];
+            foreach ($items as $item) {
+                $productId = (string) ($item['product_id'] ?? '');
+                if ($productId === '' || !isset($priceByProduct[$productId]['unit_price'])) {
+                    throw new BusinessException("Missing price for product {$productId}", 400);
+                }
+
+                $rows[] = [
+                    'checkout_id' => $checkoutSession->id,
+                    'product_id'  => $productId,
+                    'qty'         => (int) ($item['qty'] ?? 0),
+                    'price'       => $priceByProduct[$productId]['unit_price'],
+                    'created_at'  => $now,
+                    'updated_at'  => $now,
+                ];
             }
-    
-            return $updated === 1;
+
+            $this->checkoutItems->insertMany($rows);
+
+            return $checkoutSession;
+        });
+    }
+
+    private function publishOrderCheckoutEvent(CheckoutSession $checkout, array $items, string $correlationId): void
+    {
+        $payload = EventPayloadBuilder::build(EventTopic::ORDER_CHECKOUT_REQUESTED, $correlationId, [
+            'checkout_id' => $checkout->id,
+            'items'       => $items,
+            'expires_at'  => $checkout->getExpireAtIso(),
+        ]);
+
+        Publisher::publishStatic(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
+
+        logger()->info('ORDER_CHECKOUT_REQUESTED EVENT PUBLISHED', [
+            'checkout_id' => $checkout->id,
+            'payload' => $payload,
+        ]);
     }
 }

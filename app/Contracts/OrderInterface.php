@@ -2,19 +2,13 @@
 
 namespace App\Contracts;
 
-use App\Contracts\BaseInterface;
 use App\Models\Order;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 interface OrderInterface extends BaseInterface
 {
-    public function createPendingOrder(int $userId, array $items, float $total): Order;
+    public function createOrder(array $attributes): Order;
 
-    public function paginateByUser(int $userId): LengthAwarePaginator;
+    public function findByCheckoutId(string $checkoutId): ?Order;
 
-    public function getByUserAndId(int $userId, int $orderId): Order;
-
-    public function markAsPaid(int $orderId): void;
-
-    public function markAsCancelled(int $orderId): void;
+    public function updateByCheckoutId(string $checkoutId, array $data): int;
 }

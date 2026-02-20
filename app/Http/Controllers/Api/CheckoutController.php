@@ -2,20 +2,24 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\OrderStatus;
+use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckoutRequest;
-use App\UseCases\Checkout\StartCheckout;
-use App\Exceptions\BusinessException;
 use App\Models\CheckoutSession;
-use App\Enums\OrderStatus;
+use App\Services\CheckoutService;
 use Illuminate\Http\JsonResponse;
 
 class CheckoutController extends Controller
 {
-    public function checkout(CheckoutRequest $request, StartCheckout $useCase): JsonResponse
+    public function __construct(
+        private readonly CheckoutService $checkoutService
+    ) {}
+
+    public function checkout(CheckoutRequest $request): JsonResponse
     {
         try {
-            $result = $useCase->handle(
+            $result = $this->checkoutService->startCheckout(
                 items: $request->validated('items'),
                 userId: $request->validated('user_id'),
                 rawIdempotencyKey: $request->validated('idempotency_key')
@@ -24,23 +28,24 @@ class CheckoutController extends Controller
             return $this->errorResponse($e->getMessage(), $e->getStatus(), $e->getData());
         }
 
-        if ($result->existing) {
-            return $this->existingOrderResponse($result->checkout);
+        $checkout = $result['checkout'];
+        if ($result['existing']) {
+            return $this->existingOrderResponse($checkout);
         }
 
-        return $this->successResponse($result->checkout->id, $result->checkout->getExpireAtIso());
+        return $this->successResponse($checkout->id, $checkout->getExpireAtIso());
     }
 
     private function existingOrderResponse(CheckoutSession $checkout): JsonResponse
     {
         return response()->json([
             'checkout_id' => $checkout->id,
-            'status'      => $checkout->status_id,
+            'status'      => $checkout->status_id->value,
             'message'     => match ($checkout->status_id) {
-                OrderStatus::PAID->value => 'Order already paid',
-                OrderStatus::CANCELLED->value => 'Order was cancelled',
+                OrderStatus::PAID => 'Order already paid',
+                OrderStatus::CANCELLED => 'Order was cancelled',
                 default => 'Order already received and is processing',
-            }
+            },
         ]);
     }
 
