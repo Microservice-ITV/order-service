@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
+use App\Services\EventPayloadBuilder;
 use App\Logging\LogMessage;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
@@ -149,23 +150,14 @@ class ConsumePaymentSucceeded extends BaseConsumer
              * Publish ORDER_COMPLETED event
              * Downstream services (stock, shipping, email, etc.)
              */
-            Publisher::publish(
-                EventTopic::ORDER_COMPLETED,
-                [
-                    'event'          => EventTopic::ORDER_COMPLETED->value,
-                    'version'        => 'v1',
-                    'timestamp'      => now()->utc()->toIso8601String(),
-                    'producer'       => 'order-service',
-                    'correlation_id' => $correlationId,
-                    'data' => [
-                        'order_id'      => $order->order_id,
-                        'checkout_id'   => $checkoutId,
-                        'payment_id'    => $paymentId,
-                        'reservation_id'=> $order->reservation_id,
-                        'expire_at'     => $checkout->getExpireAtIso(),
-                    ],
-                ]
-            );
+            $payload = EventPayloadBuilder::build(EventTopic::ORDER_COMPLETED, $correlationId, [
+                'order_id'       => $order->order_id,
+                'checkout_id'    => $checkoutId,
+                'payment_id'     => $paymentId,
+                'reservation_id' => $order->reservation_id,
+                'expire_at'      => $checkout->getExpireAtIso(),
+            ]);
+            Publisher::publishStatic(EventTopic::ORDER_COMPLETED, $payload);
 
         } catch (Throwable $e) {
             logger()->error(LogMessage::PAYMENT_COMPLETED_PROCESSING_FAILED, [
