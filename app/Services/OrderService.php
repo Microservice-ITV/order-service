@@ -2,28 +2,50 @@
 
 namespace App\Services;
 
-use App\Contracts\OrderInterface;
+use App\Logging\LogMessage;
+use App\Enums\OrderStatus;
+use App\Models\CheckoutSession;
 use App\Models\Order;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
 
 class OrderService
 {
-    public function __construct(
-        private OrderInterface $orderRepo
-    ) {}
-
-    public function list(int $userId): LengthAwarePaginator
+    public function createOrder( string $checkoutId, string $correlationId, ?string $reservationId = null): Order 
     {
-        return $this->orderRepo->paginateByUser($userId);
+        return Order::create([
+            'order_id'       => (string) Str::uuid(),
+            'checkout_id'    => $checkoutId,
+            'reservation_id' => $reservationId,
+            'status_id'      => OrderStatus::CONFIRMED->value,
+            'correlation_id' => $correlationId,
+        ]);
+    }
+    public function attachPayment( string $checkoutId, string $paymentId): bool {
+        return Order::query()
+            ->where('checkout_id', $checkoutId)
+            ->update([
+                'payment_id' => $paymentId,
+                'updated_at' => now(),
+            ]) === 1;
     }
 
-    public function orderDetails(int $userId, int $orderId): Order
+    public function markPaid(string $checkoutId): bool
     {
-        return $this->orderRepo->getByUserAndId($userId, $orderId);
+        return Order::query()
+            ->where('checkout_id', $checkoutId)
+            ->update([
+                'status_id' => OrderStatus::PAID->value,
+                'updated_at' => now(),
+            ]) === 1;
     }
 
-    public function markPaid(int $orderId): void
+    public function cancel(string $checkoutId): bool
     {
-        $this->orderRepo->markAsPaid($orderId);
+        return Order::query()
+            ->where('checkout_id', $checkoutId)
+            ->update([
+                'status_id'  => OrderStatus::CANCELLED->value,
+                'updated_at' => now(),
+            ]) === 1;
     }
 }

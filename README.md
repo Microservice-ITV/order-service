@@ -1,59 +1,705 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Order Service
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Event-driven microservice for order management using Laravel 12 and RabbitMQ (CloudAMQP).
 
-## About Laravel
+## Table of Contents
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Setup & Installation](#setup--installation)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [API Endpoints](#api-endpoints)
+- [RabbitMQ Event Flow](#rabbitmq-event-flow)
+- [Database Schema](#database-schema)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+---
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Overview
 
-## Learning Laravel
+The Order Service is a microservice responsible for:
+- Creating orders from customer checkouts
+- Managing order lifecycle (created → pending_payment → confirmed)
+- Publishing and consuming events via RabbitMQ
+- Integrating with Product Service and Payment Service through event-driven architecture
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+### Tech Stack
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- **Framework**: Laravel 12
+- **Database**: MySQL
+- **Message Queue**: RabbitMQ (CloudAMQP)
+- **Authentication**: JWT (tymon/jwt-auth)
+- **Build Tool**: Vite + Tailwind CSS
+- **Testing**: PHPUnit
 
-## Laravel Sponsors
+---
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Architecture
 
-### Premium Partners
+### Event-Driven Microservices
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+```
+┌─────────────────┐
+│  Order Service  │
+│ (This Service)  │
+└────────┬────────┘
+         │
+    RabbitMQ Exchange: order_events
+         │
+    ┌────┴────────────────┬──────────────────┐
+    │                     │                  │
+    ▼                     ▼                  ▼
+PRODUCT_VALIDATED  PAYMENT_REQUESTED  PAYMENT_SUCCEEDED
+(from Product)     (to Payment)       (from Payment)
+```
 
-## Contributing
+### Layer Architecture
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```
+┌──────────────────────────┐
+│    API Controllers       │
+│  (CheckoutController)    │
+└────────────┬─────────────┘
+             │
+┌────────────▼─────────────┐
+│   Business Logic         │
+│   (OrderService)         │
+└────────────┬─────────────┘
+             │
+┌────────────▼─────────────┐
+│   Data Access Layer      │
+│  (OrderRepository)       │
+└────────────┬─────────────┘
+             │
+┌────────────▼─────────────┐
+│   Database (Eloquent)    │
+│  (Orders, OrderItems)    │
+└──────────────────────────┘
+```
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Setup & Installation
 
-## Security Vulnerabilities
+### Prerequisites
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- PHP 8.2+
+- Composer
+- MySQL 8.0+
+- Node.js 18+
+- npm
+- RabbitMQ (CloudAMQP account)
 
-## License
+### Step 1: Clone & Install Dependencies
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+```bash
+cd c:\xampp\htdocs\order-service
+composer install
+npm install
+```
+
+### Step 2: Environment Configuration
+
+Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Update `.env` with your credentials:
+
+```env
+APP_NAME=Order Service
+APP_ENV=local
+APP_DEBUG=true
+
+# Database
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=order_service
+DB_USERNAME=root
+DB_PASSWORD=root
+
+# RabbitMQ (CloudAMQP)
+RABBITMQ_HOST=armadillo-01.rmq.cloudamqp.com
+RABBITMQ_PORT=5671
+RABBITMQ_USER=your_cloudamqp_user
+RABBITMQ_PASSWORD=your_cloudamqp_password
+RABBITMQ_VHOST=your_cloudamqp_vhost
+RABBITMQ_SSL=true
+RABBITMQ_EXCHANGE=order_events
+RABBITMQ_QUEUE_PRODUCT=order_service.product_stock
+RABBITMQ_QUEUE_PAYMENT=order_service.payment
+
+# JWT
+JWT_SECRET=your_jwt_secret
+JWT_TTL=15
+
+# Cache & Session
+CACHE_STORE=database
+SESSION_DRIVER=file
+```
+
+### Step 3: Generate Keys
+
+```bash
+php artisan key:generate
+php artisan jwt:secret
+```
+
+### Step 4: Database Setup
+
+```bash
+php artisan migrate
+```
+
+### Step 5: Build Frontend
+
+```bash
+npm run build
+```
+
+---
+
+## Configuration
+
+### RabbitMQ Configuration (`config/rabbitmq.php`)
+
+```php
+RABBITMQ_HOST           // CloudAMQP host
+RABBITMQ_PORT           // 5671 (SSL), 5672 (non-SSL)
+RABBITMQ_USER           // CloudAMQP username
+RABBITMQ_PASSWORD       // CloudAMQP password
+RABBITMQ_VHOST          // CloudAMQP vhost
+RABBITMQ_SSL            // true/false
+RABBITMQ_EXCHANGE       // order_events
+RABBITMQ_QUEUE_PRODUCT  // Product validation/rejection queue
+RABBITMQ_QUEUE_PAYMENT  // Payment response queue
+```
+
+### Event Topics (`app/Enums/EventTopic.php`)
+
+```php
+ORDER_CHECKOUT_REQUESTED   // order.created
+PRODUCT_VALIDATED          // product.stock.reserved
+PRODUCT_REJECTED           // product.stock.rejected
+PAYMENT_REQUESTED          // payment.requested
+PAYMENT_SUCCEEDED          // payment.authorized
+PAYMENT_FAILED             // payment.failed
+```
+
+### Order Status (`app/Enums/OrderStatus.php`)
+
+```
+created         → Order created, awaiting product validation
+pending_payment → Products validated, waiting for payment
+confirmed       → Payment successful, order confirmed
+rejected        → Product validation failed
+failed          → Payment processing failed
+```
+
+---
+
+## Testing
+
+### Setup Test Environment
+
+1. **Start Laravel Dev Server**
+   ```bash
+   php artisan serve
+   ```
+   Server runs on: `http://localhost:8000`
+
+2. **Start RabbitMQ Consumer** (in another terminal)
+   ```bash
+   php artisan consume:product-validated
+   ```
+   Wait for: `Listening on queue: order_service.product_stock`
+
+3. **Import Postman Collection**
+   - File: `postman_collection.json`
+   - Set environment variable: `base_url=http://localhost:8000`
+
+### Complete Testing Workflow
+
+#### Step 1: Create Order
+
+**Postman**: Send `1. Create Order (Checkout)` request
+
+```json
+POST /api/checkout
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "product_id": 1,
+      "qty": 2,
+      "price": 29.99
+    }
+  ]
+}
+```
+
+**Response**:
+```json
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+✅ Order created with status: `created`
+
+#### Step 2: Publish Product Validated Event
+
+**Postman**: Send `2. Publish Product Validated Event` request
+
+```json
+POST /api/webhook/product-validated
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "total": 59.98,
+  "items": [
+    {
+      "product_id": 1,
+      "qty": 2,
+      "price": 29.99
+    }
+  ]
+}
+```
+
+✅ Consumer processes message
+✅ Order status: `pending_payment`
+✅ Order items created
+✅ `PAYMENT_REQUESTED` event published
+
+#### Step 3: Publish Payment Succeeded Event
+
+**Postman**: Send `3. Publish Payment Succeeded Event` request
+
+```json
+POST /api/webhook/payment-succeeded
+Content-Type: application/json
+
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+✅ Order status: `confirmed`
+✅ Session cart cleared
+
+### Verify Results
+
+```bash
+php artisan tinker
+>>> use App\Models\Order;
+>>> $order = Order::find('550e8400-e29b-41d4-a716-446655440000');
+>>> $order->status;           // 'confirmed'
+>>> $order->items()->get();   // Order items
+>>> $order->total;            // 59.98
+```
+
+### Unit Tests
+
+```bash
+php artisan test
+```
+
+### Integration Tests
+
+Test the complete flow from checkout to payment:
+
+```bash
+php artisan test tests/Feature/CheckoutTest.php
+```
+
+---
+
+## API Endpoints
+
+### 1. Checkout Endpoint
+
+**Create a new order from cart items**
+
+```
+POST /api/checkout
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "product_id": integer,
+      "qty": integer,
+      "price": decimal
+    }
+  ]
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "order_id": "uuid"
+}
+```
+
+**Response** (400 Bad Request):
+```json
+{
+  "error": "Cart empty"
+}
+```
+
+---
+
+### 2. Product Validated Webhook
+
+**Simulate product service validation**
+
+```
+POST /api/webhook/product-validated
+Content-Type: application/json
+
+{
+  "order_id": "uuid",
+  "total": decimal,
+  "items": [
+    {
+      "product_id": integer,
+      "qty": integer,
+      "price": decimal
+    }
+  ]
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "message": "Product validated event published",
+  "status": "published"
+}
+```
+
+---
+
+### 3. Product Rejected Webhook
+
+**Simulate product validation failure (out of stock)**
+
+```
+POST /api/webhook/product-rejected
+Content-Type: application/json
+
+{
+  "order_id": "uuid"
+}
+```
+
+---
+
+### 4. Payment Succeeded Webhook
+
+**Simulate successful payment**
+
+```
+POST /api/webhook/payment-succeeded
+Content-Type: application/json
+
+{
+  "order_id": "uuid"
+}
+```
+
+---
+
+### 5. Payment Failed Webhook
+
+**Simulate payment failure**
+
+```
+POST /api/webhook/payment-failed
+Content-Type: application/json
+
+{
+  "order_id": "uuid"
+}
+```
+
+---
+
+## RabbitMQ Event Flow
+
+### Order Creation Flow
+
+```
+1. Client: POST /api/checkout
+   ↓
+2. OrderService: Create order (status: created)
+   ↓
+3. Publisher: Emit ORDER_CHECKOUT_REQUESTED
+   ↓
+4. RabbitMQ: Route to order_events exchange
+   ↓
+5. Product Service: (Subscribes and validates stock)
+   ↓
+6. Product Service: Publishes PRODUCT_VALIDATED
+   ↓
+7. Order Service Consumer: Receives event
+   ↓
+8. OrderService: Update status to pending_payment
+   ↓
+9. OrderRepository: Create order items
+   ↓
+10. Publisher: Emit PAYMENT_REQUESTED
+    ↓
+11. Payment Service: (Subscribes and processes payment)
+    ↓
+12. Payment Service: Publishes PAYMENT_SUCCEEDED
+    ↓
+13. Order Service Consumer: Receives event
+    ↓
+14. OrderService: Confirm order (status: confirmed)
+    ↓
+✅ Order Complete
+```
+
+### Event Topics & Routing Keys
+
+| Topic | Routing Key | Publisher | Consumer |
+|-------|-------------|-----------|----------|
+| ORDER_CHECKOUT_REQUESTED | order.created | Order Service | Product Service |
+| PRODUCT_VALIDATED | product.stock.reserved | Product Service | Order Service |
+| PRODUCT_REJECTED | product.stock.rejected | Product Service | Order Service |
+| PAYMENT_REQUESTED | payment.requested | Order Service | Payment Service |
+| PAYMENT_SUCCEEDED | payment.authorized | Payment Service | Order Service |
+| PAYMENT_FAILED | payment.failed | Payment Service | Order Service |
+
+---
+
+## Database Schema
+
+### Orders Table
+
+```sql
+CREATE TABLE orders (
+  id UUID PRIMARY KEY,
+  status VARCHAR(255),
+  total DECIMAL(10, 2),
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+);
+```
+
+**Columns**:
+- `id` (UUID): Unique order identifier
+- `status`: Current order status (created, pending_payment, confirmed, rejected, failed)
+- `total`: Order total amount
+- `created_at`: Order creation timestamp
+- `updated_at`: Last update timestamp
+
+### Order Items Table
+
+```sql
+CREATE TABLE order_items (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  order_id UUID FOREIGN KEY,
+  product_id INT,
+  qty INT,
+  price DECIMAL(10, 2)
+);
+```
+
+**Columns**:
+- `id`: Item ID
+- `order_id`: Reference to orders table (cascade delete)
+- `product_id`: Product identifier
+- `qty`: Quantity ordered
+- `price`: Unit price at time of order
+
+---
+
+## Project Structure
+
+```
+order-service/
+├── app/
+│   ├── Console/
+│   │   ├── Commands/
+│   │   │   ├── ConsumeProductValidated.php     # Listen for product validation
+│   │   │   ├── ConsumeProductRejected.php      # Listen for product rejection
+│   │   │   ├── ConsumePaymentSucceeded.php     # Listen for payment success
+│   │   │   └── ConsumePaymentFailed.php        # Listen for payment failure
+│   │   └── Kernel.php
+│   ├── Contracts/
+│   │   ├── BaseInterface.php                   # Base repository contract
+│   │   └── OrderInterface.php                  # Order repository contract
+│   ├── Enums/
+│   │   ├── OrderStatus.php                     # Order status enum
+│   │   └── EventTopic.php                      # RabbitMQ event topics
+│   ├── Exceptions/
+│   │   ├── BusinessException.php
+│   │   └── RepositoryException.php
+│   ├── Http/
+│   │   ├── Controllers/
+│   │   │   ├── Api/
+│   │   │   │   ├── CheckoutController.php      # Create order endpoint
+│   │   │   │   └── WebhookController.php       # Event webhook endpoints
+│   │   │   └── Controller.php
+│   │   └── Middleware/
+│   │       ├── Authenticate.php
+│   │       └── SanitizeInput.php               # XSS protection
+│   ├── Models/
+│   │   ├── Order.php                           # Order model
+│   │   └── OrderItem.php                       # OrderItem model
+│   ├── Providers/
+│   │   ├── AppServiceProvider.php
+│   │   ├── RepositoryServiceProvider.php       # Auto-bind repositories
+│   │   └── RouteServiceProvider.php
+│   ├── Repositories/
+│   │   ├── BaseRepository.php                  # Base CRUD operations
+│   │   └── OrderRepository.php                 # Order-specific queries
+│   ├── Services/
+│   │   ├── OrderService.php                    # Business logic
+│   │   └── RabbitMQ/
+│   │       ├── RabbitMQConnection.php          # AMQP connection
+│   │       ├── Publisher.php                   # Publish events
+│   │       └── BaseConsumer.php                # Consume events
+│   └── Traits/
+│       └── Cachable.php                        # Cache helper methods
+├── config/
+│   ├── rabbitmq.php                            # RabbitMQ configuration
+│   ├── app.php
+│   ├── database.php
+│   └── ... (other Laravel configs)
+├── database/
+│   ├── migrations/
+│   │   ├── *_create_orders_table.php
+│   │   └── *_create_order_items_table.php
+│   └── seeders/
+├── routes/
+│   ├── api.php                                 # API routes
+│   └── web.php
+├── tests/
+│   ├── Feature/
+│   │   └── CheckoutTest.php
+│   └── Unit/
+├── storage/
+│   └── logs/
+│       └── laravel.log                         # Application logs
+├── .env
+├── .env.example
+├── composer.json
+├── package.json
+├── phpunit.xml
+├── postman_collection.json                     # Postman test collection
+└── README.md                                   # This file
+```
+
+---
+
+## Troubleshooting
+
+### Issue: RabbitMQ Connection Failed
+
+**Error**: `PhpAmqpLib\Exception\AMQPConnectionClosedException`
+
+**Solutions**:
+1. Verify CloudAMQP credentials in `.env`
+2. Check SSL is enabled: `RABBITMQ_SSL=true`
+3. Use correct port: `5671` (SSL) or `5672` (non-SSL)
+4. Test connection in tinker:
+   ```bash
+   php artisan tinker
+   >>> use App\Services\RabbitMQ\RabbitMQConnection;
+   >>> $conn = RabbitMQConnection::make();
+   >>> $conn->isConnected();  // Should return true
+   ```
+
+### Issue: Consumer Not Processing Messages
+
+**Solutions**:
+1. Verify consumer is running: `php artisan consume:product-validated`
+2. Check CloudAMQP dashboard for messages in queue
+3. Monitor logs: `php artisan pail`
+4. Verify routing keys match in events and consumers
+
+### Issue: Order Items Not Created
+
+**Solutions**:
+1. Check database transaction errors in logs
+2. Verify payload structure matches expected format
+3. Test with simpler payload (fewer items)
+4. Check database connection
+
+### Issue: Queue Not Appearing in CloudAMQP
+
+**Solutions**:
+1. Queues are created dynamically when consumers start
+2. Restart consumer: `php artisan consume:product-validated`
+3. Refresh CloudAMQP dashboard UI
+4. Check exchange bindings in CloudAMQP
+
+### View Logs
+
+```bash
+# Real-time logs
+php artisan pail
+
+# Or tail file
+tail -f storage/logs/laravel.log
+```
+
+### Database Issues
+
+```bash
+# Reset database
+php artisan migrate:refresh
+
+# Seed database
+php artisan db:seed
+
+# Check migrations status
+php artisan migrate:status
+```
+
+---
+
+## Development Commands
+
+```bash
+# Start development server
+php artisan serve
+
+# Start RabbitMQ consumer
+php artisan consume:product-validated
+
+# Run tests
+php artisan test
+
+# Clear cache
+php artisan cache:clear
+
+# Clear logs
+php artisan log:clear
+
+# Access Tinker
+php artisan tinker
+
+# Watch frontend changes
+npm run dev
+
+# Build frontend
+npm run build
+```
+
+---
+
+

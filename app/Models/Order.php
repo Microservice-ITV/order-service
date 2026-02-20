@@ -3,28 +3,37 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * Order represents a confirmed order (new "orders" table).
+ * This is created after checkout session is confirmed with payment and reservation.
+ */
 class Order extends Model
 {
-    public const STATUS_PENDING  = 'pending';
-    public const STATUS_PAID     = 'paid';
-    public const STATUS_FAILED   = 'failed';
-    public const STATUS_CANCELLED = 'canceled';
+    protected $primaryKey = 'order_id';
+    public $incrementing = false;
+    protected $keyType = 'string';
 
     protected $fillable = [
-        'user_id',
-        'total_amount',
-        'status',
+        'order_id',
+        'checkout_id',
+        'reservation_id',
         'payment_id',
+        'status_id',
     ];
 
     protected $casts = [
-        'total_amount' => 'decimal:2',
+        'status_id' => 'integer',
     ];
 
-    public function items(): HasMany
+    public function checkoutSession(): BelongsTo
     {
-        return $this->hasMany(OrderItem::class);
+        return $this->belongsTo(CheckoutSession::class, 'checkout_id');
+    }
+
+    public function status(): BelongsTo
+    {
+        return $this->belongsTo(OrderStatus::class, 'status_id');
     }
 }

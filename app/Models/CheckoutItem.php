@@ -1,0 +1,23 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+/**
+ * CheckoutItem represents an item in a checkout session (formerly "order_items" table).
+ */
+class CheckoutItem extends Model
+{
+    protected $table = 'checkout_items';
+
+    public $timestamps = false;
+    
+    protected $fillable = ['checkout_id', 'product_id', 'qty', 'price'];
+
+    public function checkoutSession(): BelongsTo
+    {
+        return $this->belongsTo(CheckoutSession::class, 'checkout_id');
+    }
+}

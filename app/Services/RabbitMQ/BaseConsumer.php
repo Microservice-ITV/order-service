@@ -1,0 +1,65 @@
+<?php
+
+namespace App\Services\RabbitMQ;
+
+use Illuminate\Console\Command;
+
+abstract class BaseConsumer extends Command
+{
+    abstract protected function routingKeys(): array;
+    abstract protected function queue(): string;
+    abstract protected function process(array $payload): void;
+
+    public function handle(): void
+    {
+        $this->listen();
+    }
+
+    public function listen(): void
+    {
+        $conn = RabbitMQConnection::make();
+        $channel = $conn->channel();
+
+        $channel->exchange_declare(
+            config('rabbitmq.exchange'),
+            'topic',
+            false,
+            true,
+            false
+        );
+
+        $channel->queue_declare(
+            $this->queue(),
+            false,
+            true,
+            false,
+            false
+        );
+
+        foreach ($this->routingKeys() as $key) {
+            $channel->queue_bind(
+                $this->queue(),
+                config('rabbitmq.exchange'),
+                $key
+            );
+        }
+
+        $channel->basic_consume(
+            $this->queue(),
+            '',
+            false,
+            true,
+            false,
+            false,
+            function ($msg) {
+                $this->process(json_decode($msg->body, true));
+            }
+        );
+
+        echo "Listening on queue: {$this->queue()}\n";
+
+        while (true) {
+            $channel->wait();
+        }
+    }
+}

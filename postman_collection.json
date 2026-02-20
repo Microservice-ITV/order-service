@@ -1,0 +1,233 @@
+{
+  "info": {
+    "_postman_id": "order-service-collection",
+    "name": "Order Service API - Complete Flow",
+    "description": "Order Service - RabbitMQ Event-Driven Testing",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Create Order (Checkout)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.environment.set('order_id', jsonData.order_id);",
+              "    console.log('✅ Order ID saved:', jsonData.order_id);",
+              "} else {",
+              "    console.log('❌ Failed to create order');",
+              "    console.log(pm.response.text());",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [\n    {\n      \"product_id\": 1,\n      \"qty\": 2,\n      \"price\": 29.99\n    },\n    {\n      \"product_id\": 2,\n      \"qty\": 1,\n      \"price\": 49.99\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/orders/checkout",
+          "host": ["{{base_url}}"],
+          "path": ["api", "orders", "checkout"]
+        },
+        "description": "Create a new order. This will trigger ORDER_CHECKOUT_REQUESTED event to RabbitMQ."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Publish Product Validated Event",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    console.log('✅ Product Validated event published');",
+              "    console.log('💡 Check your consumer terminal - it should process this message');",
+              "} else {",
+              "    console.log('❌ Failed to publish event');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"{{order_id}}\",\n  \"total\": 109.97,\n  \"items\": [\n    {\n      \"product_id\": 1,\n      \"qty\": 2,\n      \"price\": 29.99\n    },\n    {\n      \"product_id\": 2,\n      \"qty\": 1,\n      \"price\": 49.99\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/webhooks/product/validated",
+          "host": ["{{base_url}}"],
+          "path": ["api", "webhooks", "product", "validated"]
+        },
+        "description": "Simulate Product Service publishing product validation event. Consumer will update order status to pending_payment."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Publish Payment Succeeded Event",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    console.log('✅ Payment Succeeded event published');",
+              "    console.log('💡 Consumer should confirm the order');",
+              "} else {",
+              "    console.log('❌ Failed to publish event');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/webhooks/payment/succeeded",
+          "host": ["{{base_url}}"],
+          "path": ["api", "webhooks", "payment", "succeeded"]
+        },
+        "description": "Simulate Payment Service publishing payment success event. Consumer will confirm the order."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Publish Product Rejected Event",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    console.log('✅ Product Rejected event published');",
+              "    console.log('💡 Consumer should reject the order');",
+              "} else {",
+              "    console.log('❌ Failed to publish event');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/webhooks/product/rejected",
+          "host": ["{{base_url}}"],
+          "path": ["api", "webhooks", "product", "rejected"]
+        },
+        "description": "Simulate Product Service publishing product rejection event (out of stock). Consumer will reject the order."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Publish Payment Failed Event",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    console.log('✅ Payment Failed event published');",
+              "    console.log('💡 Consumer should mark order as failed');",
+              "} else {",
+              "    console.log('❌ Failed to publish event');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/webhooks/payment/failed",
+          "host": ["{{base_url}}"],
+          "path": ["api", "webhooks", "payment", "failed"]
+        },
+        "description": "Simulate Payment Service publishing payment failure event (insufficient funds, etc). Consumer will mark order as failed."
+      },
+      "response": []
+    },
+    {
+      "name": "Test Server Connection",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/",
+          "host": ["{{base_url}}"],
+          "path": [""]
+        },
+        "description": "Test basic connection to verify server is running"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

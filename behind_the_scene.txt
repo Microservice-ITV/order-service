@@ -1,0 +1,17 @@
+POST /api/checkout
+    ↓
+Creates Order (status: 'created')
+    ↓
+Publishes ORDER_CHECKOUT_REQUESTED event
+    ↓
+POST /api/webhook/product-validated
+    ↓
+Publishes PRODUCT_VALIDATED event to RabbitMQ
+    ↓
+Consumer receives message
+    ↓
+Updates order (status: 'pending_payment')
+    ↓
+Creates order items
+    ↓
+Publishes PAYMENT_REQUESTED event
