@@ -4,8 +4,10 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
+use App\Services\EventPayloadBuilder;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
+use App\Services\RabbitMQ\Publisher;
 use App\Logging\LogMessage;
 
 class ConsumeProductRejected extends BaseConsumer
@@ -51,15 +53,33 @@ class ConsumeProductRejected extends BaseConsumer
             return;
         }
 
-        match ($checkoutService->reject($checkoutId, $reason)) {
-            true => logger()->info(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+        $rejected = $checkoutService->reject($checkoutId, $reason);
+        if (!$rejected) {
+            logger()->warning(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
                 'checkout_id' => $checkoutId,
-                'reason'      => $reason,
-            ]),
-            false => logger()->warning(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
+            ]);
+            return;
+        }
+
+        $checkout = $checkoutService->findById($checkoutId);
+        $orderId = $checkout?->order?->order_id;
+        $correlationId = (string) ($payload['correlation_id'] ?? $data['correlation_id'] ?? $checkout?->correlation_id ?? '');
+        if ($correlationId !== '') {
+            $eventPayload = EventPayloadBuilder::build(EventTopic::ORDER_CANCELLED, $correlationId, [
+                'order_id' => $orderId,
                 'checkout_id' => $checkoutId,
-            ]),
-        };
+                'user_id' => (string) ($checkout?->user_id ?? ''),
+                'status' => 'CANCELLED',
+                'updatedAt' => now()->utc()->toIso8601String(),
+                'reason' => $reason,
+            ]);
+            Publisher::publishStatic(EventTopic::ORDER_CANCELLED, $eventPayload);
+        }
+
+        logger()->info(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+            'checkout_id' => $checkoutId,
+            'reason'      => $reason,
+        ]);
         
     }
 }

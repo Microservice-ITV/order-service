@@ -280,7 +280,7 @@ class CheckoutService
             throw $e;
         }
 
-        $this->publishOrderCheckoutEvent($checkout, $items, $idempotencyHash);
+        $this->publishOrderCheckoutEvent($checkout, $idempotencyHash);
 
         return ['checkout' => $checkout, 'existing' => false];
     }
@@ -323,12 +323,35 @@ class CheckoutService
         });
     }
 
-    private function publishOrderCheckoutEvent(CheckoutSession $checkout, array $items, string $correlationId): void
+    private function publishOrderCheckoutEvent(CheckoutSession $checkout, string $correlationId): void
     {
+        $checkout->loadMissing('items');
+        $eventItems = $checkout->items->map(static function ($item): array {
+            return [
+                'product_id' => $item->product_id,
+                'qty' => (int) $item->qty,
+                'unit_price' => (float) $item->price,
+            ];
+        })->values()->all();
+
+        $subtotal = (float) array_reduce(
+            $eventItems,
+            static fn (float $carry, array $item): float => $carry + ((float) $item['unit_price'] * (int) $item['qty']),
+            0.0
+        );
+
         $payload = EventPayloadBuilder::build(EventTopic::ORDER_CHECKOUT_REQUESTED, $correlationId, [
+            'order_id' => null,
             'checkout_id' => $checkout->id,
-            'items'       => $items,
-            'expires_at'  => $checkout->getExpireAtIso(),
+            'user_id' => (string) $checkout->user_id,
+            'status' => 'CREATED',
+            'items' => $eventItems,
+            'subtotal' => $subtotal,
+            'total' => (float) ($checkout->total ?? $subtotal),
+            'currency' => 'USD',
+            'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),
+            'updatedAt' => optional($checkout->updated_at)?->copy()->utc()->toIso8601String(),
+            'expires_at' => $checkout->getExpireAtIso(),
         ]);
 
         Publisher::publishStatic(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
