@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 Route::controller(CheckoutController::class)->prefix('orders')->group(function () {
     Route::post('/checkout', 'checkout')->name('orders.checkout');
     Route::get('/checkout-sessions/{checkout_id}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');
+    Route::post('/checkout-sessions/{checkout_id}/cancel', [CheckoutSessionController::class, 'cancel'])->name('checkout-sessions.cancel');
 });
 
 // Webhook Routes (verify HMAC signature when WEBHOOK_SECRET is set)

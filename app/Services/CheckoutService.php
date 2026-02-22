@@ -196,6 +196,91 @@ class CheckoutService
         );
     }
 
+    public function cancelByUser(string $checkoutId, ?string $reason = null): array
+    {
+        /** @var ?CheckoutSession $checkout */
+        $checkout = $this->checkoutSessions->findById($checkoutId);
+        if (!$checkout) {
+            return [
+                'not_found' => true,
+                'already_cancelled' => false,
+                'invalid_state' => false,
+                'status' => null,
+            ];
+        }
+
+        if ($checkout->status_id === OrderStatus::CANCELLED) {
+            return [
+                'not_found' => false,
+                'already_cancelled' => true,
+                'invalid_state' => false,
+                'status' => OrderStatus::CANCELLED->name,
+            ];
+        }
+
+        $allowedFrom = [
+            OrderStatus::PENDING_STOCK,
+            OrderStatus::STOCK_CONFIRMED,
+            OrderStatus::PENDING_PAYMENT,
+        ];
+
+        if (!in_array($checkout->status_id, $allowedFrom, true)) {
+            return [
+                'not_found' => false,
+                'already_cancelled' => false,
+                'invalid_state' => true,
+                'status' => $checkout->status_id->name,
+            ];
+        }
+
+        $updated = $this->checkoutSessions->updateWhere(
+            [
+                ['id', '=', $checkoutId],
+                ['status_id', '=', $checkout->status_id->value],
+            ],
+            [
+                'status_id' => OrderStatus::CANCELLED->value,
+                'failure_reason' => $reason ?? 'USER_CANCELLED',
+                'updated_at' => now(),
+            ]
+        );
+
+        if ($updated !== 1) {
+            return [
+                'not_found' => false,
+                'already_cancelled' => false,
+                'invalid_state' => true,
+                'status' => $checkout->status_id->name,
+            ];
+        }
+
+        $latest = $this->checkoutSessions->findById($checkoutId);
+        $correlationId = (string) ($latest?->correlation_id ?? '');
+        if ($correlationId !== '') {
+            $payload = EventPayloadBuilder::build(EventTopic::ORDER_CANCELLED, $correlationId, [
+                'order_id' => $latest?->order?->order_id,
+                'checkout_id' => $checkoutId,
+                'user_id' => (string) ($latest?->user_id ?? ''),
+                'status' => 'CANCELLED',
+                'updatedAt' => now()->utc()->toIso8601String(),
+                'reason' => $reason ?? 'USER_CANCELLED',
+            ]);
+            Publisher::publishStatic(EventTopic::ORDER_CANCELLED, $payload);
+        }
+
+        logger()->info('CHECKOUT_CANCELLED_BY_USER', [
+            'checkout_id' => $checkoutId,
+            'reason' => $reason ?? 'USER_CANCELLED',
+        ]);
+
+        return [
+            'not_found' => false,
+            'already_cancelled' => false,
+            'invalid_state' => false,
+            'status' => OrderStatus::CANCELLED->name,
+        ];
+    }
+
     /**
      * Atomically transition checkout status. Returns true only if exactly one row was updated.
      */
