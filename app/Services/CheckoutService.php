@@ -441,7 +441,7 @@ class CheckoutService
 
         Publisher::publishStatic(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
 
-        logger()->info('ORDER_CHECKOUT_REQUESTED EVENT PUBLISHED', [
+        logger()->info('ORDER_CREATED EVENT PUBLISHED', [
             'checkout_id' => $checkout->id,
             'payload' => $payload,
         ]);

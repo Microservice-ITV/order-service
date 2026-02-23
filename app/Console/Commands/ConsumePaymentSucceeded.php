@@ -171,6 +171,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
             ]);
             Publisher::publishStatic(EventTopic::ORDER_COMPLETED, $payload);
 
+       logger()->info(LogMessage::ORDER_COMPLETED_EVENT_PUBLISHED, [
+            'payload' => $payload,
+        ]);
+
         } catch (Throwable $e) {
             logger()->error(LogMessage::PAYMENT_COMPLETED_PROCESSING_FAILED, [
                 'checkout_id'    => $checkoutId,
