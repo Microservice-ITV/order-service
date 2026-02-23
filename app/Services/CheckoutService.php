@@ -350,7 +350,7 @@ class CheckoutService
         try {
             $checkout = $this->createCheckoutSessionAndItems(
                 items: $items,
-                priceByProduct: $validationData['priceByProduct'],
+                validatedItems: $validationData['items'],
                 userId: $userId,
                 idempotencyHash: $idempotencyHash
             );
@@ -370,10 +370,23 @@ class CheckoutService
         return ['checkout' => $checkout, 'existing' => false];
     }
 
-    private function createCheckoutSessionAndItems(array $items, array $priceByProduct, string $userId, string $idempotencyHash): CheckoutSession
+    private function createCheckoutSessionAndItems(array $items, array $validatedItems, string $userId, string $idempotencyHash): CheckoutSession
     {
-        return DB::transaction(function () use ($items, $priceByProduct, $idempotencyHash, $userId) {
+        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId) {
             $now = now();
+            $validationByProduct = [];
+            foreach ($validatedItems as $validatedItem) {
+                if (!is_array($validatedItem)) {
+                    continue;
+                }
+
+                $productId = (string) ($validatedItem['product_id'] ?? '');
+                if ($productId === '') {
+                    continue;
+                }
+
+                $validationByProduct[$productId] = $validatedItem;
+            }
 
             $checkoutSession = $this->create([
                 'idempotency_key' => $idempotencyHash,
@@ -388,17 +401,41 @@ class CheckoutService
             $rows = [];
             foreach ($items as $item) {
                 $productId = (string) ($item['product_id'] ?? '');
-                if ($productId === '' || !isset($priceByProduct[$productId]['unit_price'])) {
+                $validatedRow = $validationByProduct[$productId] ?? [];
+                $unitPrice = $validatedRow['unit_price'] ?? null;
+                if ($productId === '' || !is_numeric($unitPrice)) {
                     throw new BusinessException("Missing price for product {$productId}", 400);
                 }
 
+                $product = is_array($validatedRow['product'] ?? null) ? $validatedRow['product'] : [];
+                $productSlug = isset($product['slug']) ? (string) $product['slug'] : null;
+                $productTitle = isset($product['title']) ? (string) $product['title'] : null;
+                $productDescription = isset($product['description']) ? (string) $product['description'] : null;
+                $productSku = isset($product['sku']) ? (string) $product['sku'] : null;
+                $categoryId = isset($product['category_id']) ? (string) $product['category_id'] : null;
+                $shopId = isset($product['shop_id']) ? (string) $product['shop_id'] : null;
+                $imageUrl = isset($product['image_url']) ? (string) $product['image_url'] : null;
+                $currency = isset($product['currency']) ? (string) $product['currency'] : 'USD';
+                $availableStock = $validatedRow['available_stock'] ?? $product['available_stock'] ?? null;
+                $lineTotal = $validatedRow['line_total'] ?? ((float) $unitPrice * (int) ($item['qty'] ?? 0));
+
                 $rows[] = [
                     'checkout_id' => $checkoutSession->id,
-                    'product_id'  => $productId,
-                    'qty'         => (int) ($item['qty'] ?? 0),
-                    'price'       => $priceByProduct[$productId]['unit_price'],
-                    'created_at'  => $now,
-                    'updated_at'  => $now,
+                    'product_id' => $productId,
+                    'qty' => (int) ($item['qty'] ?? 0),
+                    'price' => (float) $unitPrice,
+                    'line_total' => (float) $lineTotal,
+                    'available_stock' => is_numeric($availableStock) ? (int) $availableStock : null,
+                    'product_slug' => $productSlug,
+                    'product_title' => $productTitle,
+                    'product_description' => $productDescription,
+                    'product_sku' => $productSku,
+                    'category_id' => $categoryId,
+                    'shop_id' => $shopId,
+                    'image_url' => $imageUrl,
+                    'currency' => $currency,
+                    'created_at' => $now,
+                    'updated_at' => $now,
                 ];
             }
 
@@ -414,14 +451,29 @@ class CheckoutService
         $eventItems = $checkout->items->map(static function ($item): array {
             return [
                 'product_id' => $item->product_id,
+                'sku' => $item->product_sku,
+                'slug' => $item->product_slug,
+                'name' => $item->product_title,
+                'description' => $item->product_description,
+                'image_url' => $item->image_url,
                 'qty' => (int) $item->qty,
                 'unit_price' => (float) $item->price,
+                'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
+                'currency' => $item->currency ?? 'USD',
+                'shop_id' => $item->shop_id,
+                'category_id' => $item->category_id,
+                'available_stock' => isset($item->available_stock) ? (int) $item->available_stock : null,
             ];
         })->values()->all();
 
+        $currency = 'USD';
+        if ($eventItems !== []) {
+            $currency = (string) ($eventItems[0]['currency'] ?? 'USD');
+        }
+
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + ((float) $item['unit_price'] * (int) $item['qty']),
+            static fn (float $carry, array $item): float => $carry + (float) ($item['line_total'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
             0.0
         );
 
@@ -433,7 +485,7 @@ class CheckoutService
             'items' => $eventItems,
             'subtotal' => $subtotal,
             'total' => (float) ($checkout->total ?? $subtotal),
-            'currency' => 'USD',
+            'currency' => $currency,
             'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),
             'updatedAt' => optional($checkout->updated_at)?->copy()->utc()->toIso8601String(),
             'expires_at' => $checkout->getExpireAtIso(),
