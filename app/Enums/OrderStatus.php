@@ -12,6 +12,10 @@ enum OrderStatus: int
     case PENDING_PAYMENT = 6;
     case CONFIRMED       = 7;
     case CANCELLED       = 8;
+    case PARTIALLY_FULFILLED = 9;
+    case FULFILLED = 10;
+    case PARTIALLY_REFUNDED = 11;
+    case REFUNDED = 12;
 }
 
 
