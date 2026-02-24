@@ -3,6 +3,8 @@
 namespace App\Services\RabbitMQ;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 abstract class BaseConsumer extends Command
 {
@@ -52,7 +54,34 @@ abstract class BaseConsumer extends Command
             false,
             false,
             function ($msg) {
-                $this->process(json_decode($msg->body, true));
+                $payload = json_decode($msg->body, true);
+                if (!is_array($payload)) {
+                    return;
+                }
+
+                $eventId = (string) ($payload['event_id'] ?? '');
+                if ($eventId === '') {
+                    // Backward compatibility for old messages without event_id.
+                    $this->process($payload);
+                    return;
+                }
+
+                if ($this->isAlreadyProcessed($eventId)) {
+                    logger()->info('EVENT_SKIPPED_ALREADY_PROCESSED', [
+                        'event_id' => $eventId,
+                        'consumer' => static::class,
+                    ]);
+                    return;
+                }
+
+                $this->markProcessing($eventId, (string) ($payload['event'] ?? null));
+                try {
+                    $this->process($payload);
+                    $this->markProcessed($eventId);
+                } catch (Throwable $e) {
+                    $this->markFailed($eventId, $e->getMessage());
+                    throw $e;
+                }
             }
         );
 
@@ -61,5 +90,52 @@ abstract class BaseConsumer extends Command
         while (true) {
             $channel->wait();
         }
+    }
+
+    private function isAlreadyProcessed(string $eventId): bool
+    {
+        return DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->where('status', 'PROCESSED')
+            ->exists();
+    }
+
+    private function markProcessing(string $eventId, ?string $eventType): void
+    {
+        DB::table('processed_events')->updateOrInsert(
+            ['event_id' => $eventId],
+            [
+                'event_type' => $eventType,
+                'consumer' => static::class,
+                'status' => 'PROCESSING',
+                'last_error' => null,
+                'processed_at' => null,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    private function markProcessed(string $eventId): void
+    {
+        DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->update([
+                'status' => 'PROCESSED',
+                'processed_at' => now(),
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function markFailed(string $eventId, string $error): void
+    {
+        DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->update([
+                'status' => 'FAILED',
+                'last_error' => mb_substr($error, 0, 2000),
+                'updated_at' => now(),
+            ]);
     }
 }
