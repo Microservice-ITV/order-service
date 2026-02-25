@@ -3,6 +3,8 @@
 namespace App\Services\RabbitMQ;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 abstract class BaseConsumer extends Command
 {
@@ -52,7 +54,41 @@ abstract class BaseConsumer extends Command
             false,
             false,
             function ($msg) {
-                $this->process(json_decode($msg->body, true));
+                $payload = json_decode($msg->body, true);
+                if (!is_array($payload)) {
+                    return;
+                }
+
+                $eventId = (string) ($payload['event_id'] ?? '');
+                if ($eventId === '') {
+                    // Backward compatibility for old messages without event_id.
+                    $this->process($payload);
+                    return;
+                }
+
+                $eventType = (string) ($payload['event'] ?? '');
+                $this->trackInboxReceived($eventId, $eventType, $payload);
+
+                if ($this->isAlreadyProcessed($eventId)) {
+                    $this->trackInboxSkippedDuplicate($eventId);
+                    logger()->info('EVENT_SKIPPED_ALREADY_PROCESSED', [
+                        'event_id' => $eventId,
+                        'consumer' => static::class,
+                    ]);
+                    return;
+                }
+
+                $this->markProcessing($eventId, $eventType);
+                $this->trackInboxProcessing($eventId);
+                try {
+                    $this->process($payload);
+                    $this->markProcessed($eventId);
+                    $this->trackInboxProcessed($eventId);
+                } catch (Throwable $e) {
+                    $this->markFailed($eventId, $e->getMessage());
+                    $this->trackInboxFailed($eventId, $e->getMessage());
+                    throw $e;
+                }
             }
         );
 
@@ -61,5 +97,133 @@ abstract class BaseConsumer extends Command
         while (true) {
             $channel->wait();
         }
+    }
+
+    private function isAlreadyProcessed(string $eventId): bool
+    {
+        return DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->where('status', 'PROCESSED')
+            ->exists();
+    }
+
+    private function markProcessing(string $eventId, ?string $eventType): void
+    {
+        DB::table('processed_events')->updateOrInsert(
+            ['event_id' => $eventId],
+            [
+                'event_type' => $eventType,
+                'consumer' => static::class,
+                'status' => 'PROCESSING',
+                'last_error' => null,
+                'processed_at' => null,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    private function markProcessed(string $eventId): void
+    {
+        DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->update([
+                'status' => 'PROCESSED',
+                'processed_at' => now(),
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function markFailed(string $eventId, string $error): void
+    {
+        DB::table('processed_events')
+            ->where('event_id', $eventId)
+            ->update([
+                'status' => 'FAILED',
+                'last_error' => mb_substr($error, 0, 2000),
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function trackInboxReceived(string $eventId, string $eventType, array $payload): void
+    {
+        $consumer = static::class;
+        $existing = DB::table('inbox_events')
+            ->where('event_id', $eventId)
+            ->where('consumer', $consumer)
+            ->first(['id', 'receive_count']);
+
+        if ($existing) {
+            DB::table('inbox_events')
+                ->where('id', $existing->id)
+                ->update([
+                    'receive_count' => (int) $existing->receive_count + 1,
+                    'last_received_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            return;
+        }
+
+        DB::table('inbox_events')->insert([
+            'event_id' => $eventId,
+            'event_type' => $eventType !== '' ? $eventType : null,
+            'consumer' => $consumer,
+            'payload' => json_encode($payload),
+            'status' => 'RECEIVED',
+            'receive_count' => 1,
+            'first_received_at' => now(),
+            'last_received_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function trackInboxProcessing(string $eventId): void
+    {
+        DB::table('inbox_events')
+            ->where('event_id', $eventId)
+            ->where('consumer', static::class)
+            ->update([
+                'status' => 'PROCESSING',
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function trackInboxProcessed(string $eventId): void
+    {
+        DB::table('inbox_events')
+            ->where('event_id', $eventId)
+            ->where('consumer', static::class)
+            ->update([
+                'status' => 'PROCESSED',
+                'processed_at' => now(),
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function trackInboxSkippedDuplicate(string $eventId): void
+    {
+        DB::table('inbox_events')
+            ->where('event_id', $eventId)
+            ->where('consumer', static::class)
+            ->update([
+                'status' => 'SKIPPED_DUPLICATE',
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function trackInboxFailed(string $eventId, string $error): void
+    {
+        DB::table('inbox_events')
+            ->where('event_id', $eventId)
+            ->where('consumer', static::class)
+            ->update([
+                'status' => 'FAILED',
+                'last_error' => mb_substr($error, 0, 2000),
+                'updated_at' => now(),
+            ]);
     }
 }

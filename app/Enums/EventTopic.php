@@ -13,5 +13,6 @@ enum EventTopic: string
     case PAYMENT_FAILED = 'payment.failed';
 
     case ORDER_COMPLETED = 'order.completed';
+    case ORDER_CANCELLED = 'order.cancelled';
     case ORDER_FAILED = 'order.failed';
 }

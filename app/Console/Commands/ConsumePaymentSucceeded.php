@@ -40,6 +40,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
         $checkoutId = $data['checkout_id'] ?? null;
         $paymentId  = $data['payment_id'] ?? null;
+        $transactionId = $data['transaction_id'] ?? null;
+        $amount = isset($data['amount']) ? (float) $data['amount'] : null;
+        $currency = isset($data['currency']) ? (string) $data['currency'] : null;
+        $sourceUpdatedAt = $data['updatedAt'] ?? null;
         $reservationId = $data['reservation_id'] ?? null;
 
         if (!$checkoutId || !$correlationId) {
@@ -153,11 +157,23 @@ class ConsumePaymentSucceeded extends BaseConsumer
             $payload = EventPayloadBuilder::build(EventTopic::ORDER_COMPLETED, $correlationId, [
                 'order_id'       => $order->order_id,
                 'checkout_id'    => $checkoutId,
+                'user_id'        => (string) $checkout->user_id,
+                'status'         => 'COMPLETED',
                 'payment_id'     => $paymentId,
+                'transaction_id' => $transactionId,
+                'amount'         => $amount,
+                'currency'       => $currency ?? 'USD',
                 'reservation_id' => $order->reservation_id,
                 'expire_at'      => $checkout->getExpireAtIso(),
+                'updatedAt'      => is_string($sourceUpdatedAt) && $sourceUpdatedAt !== ''
+                    ? $sourceUpdatedAt
+                    : now()->utc()->toIso8601String(),
             ]);
             Publisher::publishStatic(EventTopic::ORDER_COMPLETED, $payload);
+
+       logger()->info(LogMessage::ORDER_COMPLETED_EVENT_PUBLISHED, [
+            'payload' => $payload,
+        ]);
 
         } catch (Throwable $e) {
             logger()->error(LogMessage::PAYMENT_COMPLETED_PROCESSING_FAILED, [

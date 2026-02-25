@@ -9,6 +9,7 @@ use App\Console\Commands\ConsumeProductRejected;
 use App\Console\Commands\ConsumePaymentSucceeded;
 use App\Console\Commands\ConsumePaymentFailed;
 use App\Console\Commands\ConsumeAll;
+use App\Console\Commands\PublishOutboxPending;
 
 class Kernel extends ConsoleKernel
 {
@@ -18,11 +19,12 @@ class Kernel extends ConsoleKernel
         ConsumePaymentSucceeded::class,
         ConsumePaymentFailed::class,
         ConsumeAll::class,
+        PublishOutboxPending::class,
     ];
 
     protected function schedule(Schedule $schedule): void
     {
-        // optional
+        $schedule->command('outbox:publish --limit=200')->everyMinute();
     }
 
     protected function commands(): void

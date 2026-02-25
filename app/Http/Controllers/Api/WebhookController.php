@@ -45,6 +45,12 @@ class WebhookController extends Controller
         $validated = $request->validate([
             'checkout_id'    => 'required|string|uuid',
             'payment_id'     => 'required|string',
+            'order_id'       => 'nullable|string',
+            'transaction_id' => 'nullable|string',
+            'amount'         => 'nullable|numeric',
+            'currency'       => 'nullable|string|max:10',
+            'updatedAt'      => 'nullable|date',
+            'reservation_id' => 'nullable|string',
             'correlation_id' => 'required|string',
             'expire_at'      => 'nullable|date',
         ]);
@@ -58,8 +64,12 @@ class WebhookController extends Controller
     {
         $validated = $request->validate([
             'checkout_id'    => 'required|string|uuid',
+            'payment_id'     => 'required|string',
+            'order_id'       => 'nullable|string',
+            'transaction_id' => 'nullable|string',
+            'updatedAt'      => 'nullable|date',
             'correlation_id' => 'required|string',
-            'reason'         => 'nullable|string',
+            'reason'         => 'required|string',
             'expire_at'      => 'nullable|date',
         ]);
 

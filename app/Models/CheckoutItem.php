@@ -14,7 +14,22 @@ class CheckoutItem extends Model
 
     public $timestamps = false;
     
-    protected $fillable = ['checkout_id', 'product_id', 'qty', 'price'];
+    protected $fillable = [
+        'checkout_id',
+        'product_id',
+        'qty',
+        'price',
+        'line_total',
+        'available_stock',
+        'product_slug',
+        'product_title',
+        'product_description',
+        'product_sku',
+        'category_id',
+        'shop_id',
+        'image_url',
+        'currency',
+    ];
 
     public function checkoutSession(): BelongsTo
     {
