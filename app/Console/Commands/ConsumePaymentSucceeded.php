@@ -151,10 +151,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
             ]);
 
             /**
-             * Publish ORDER_COMPLETED event
+             * Publish ORDER_PAID event
              * Downstream services (stock, shipping, email, etc.)
              */
-            $payload = EventPayloadBuilder::build(EventTopic::ORDER_COMPLETED, $correlationId, [
+            $payload = EventPayloadBuilder::build(EventTopic::ORDER_PAID, $correlationId, [
                 'order_id'       => $order->order_id,
                 'checkout_id'    => $checkoutId,
                 'user_id'        => (string) $checkout->user_id,
@@ -169,9 +169,9 @@ class ConsumePaymentSucceeded extends BaseConsumer
                     ? $sourceUpdatedAt
                     : now()->utc()->toIso8601String(),
             ]);
-            Publisher::publishStatic(EventTopic::ORDER_COMPLETED, $payload);
+            Publisher::publishStatic(EventTopic::ORDER_PAID, $payload);
 
-       logger()->info(LogMessage::ORDER_COMPLETED_EVENT_PUBLISHED, [
+            logger()->info('ORDER_PAID_EVENT_PUBLISHED', [
             'payload' => $payload,
         ]);
 
