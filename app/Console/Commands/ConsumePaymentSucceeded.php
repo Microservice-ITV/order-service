@@ -158,7 +158,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'order_id'       => $order->order_id,
                 'checkout_id'    => $checkoutId,
                 'user_id'        => (string) $checkout->user_id,
-                'status'         => 'COMPLETED',
+                'status'         => 'ORDER_PAID',
                 'payment_id'     => $paymentId,
                 'transaction_id' => $transactionId,
                 'amount'         => $amount,
