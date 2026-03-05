@@ -8,8 +8,14 @@ use Illuminate\Support\Facades\Route;
 // Order Management Routes (auth handled by auth-service / API gateway if needed)
 Route::controller(CheckoutController::class)->prefix('orders')->group(function () {
     Route::post('/checkout', 'checkout')->name('orders.checkout');
+    Route::put('/checkout/{checkout_id}/address', 'updateAddress')->name('orders.checkout.address.update');
     Route::get('/checkout-sessions/{checkout_id}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');
     Route::post('/checkout-sessions/{checkout_id}/cancel', [CheckoutSessionController::class, 'cancel'])->name('checkout-sessions.cancel');
+});
+
+// Backward-compatibility alias for clients using singular "order" prefix.
+Route::controller(CheckoutController::class)->prefix('order')->group(function () {
+    Route::put('/checkout/{checkout_id}/address', 'updateAddress')->name('order.checkout.address.update');
 });
 
 // Webhook Routes (verify HMAC signature when WEBHOOK_SECRET is set)

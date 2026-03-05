@@ -13,6 +13,7 @@ return [
     'queues' => [
         'product_reserved' => env('RABBITMQ_QUEUE_PRODUCT_RESERVED'),
         'product_rejected' => env('RABBITMQ_QUEUE_PRODUCT_REJECTED'),
+        'product_stock_confirmed' => env('RABBITMQ_QUEUE_PRODUCT_STOCK_CONFIRMED'),
         'payment_completed' => env('RABBITMQ_QUEUE_PAYMENT_COMPLETED'),
         'payment_failed' => env('RABBITMQ_QUEUE_PAYMENT_FAILED'),
     ],

@@ -29,6 +29,8 @@ class CheckoutSession extends Model
         'failure_reason',
         'idempotency_key',
         'user_id',
+        'delivery_address',
+        'address_updated_at',
         'correlation_id',
         'reservation_id',
         'payment_id',
@@ -39,6 +41,8 @@ class CheckoutSession extends Model
     protected $casts = [
         'status_id' => OrderStatus::class,
         'expire_at' => 'datetime',
+        'delivery_address' => 'array',
+        'address_updated_at' => 'datetime',
     ];
 
     public function items(): HasMany

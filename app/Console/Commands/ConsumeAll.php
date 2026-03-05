@@ -19,7 +19,7 @@ class ConsumeAll extends Command
      *
      * @var string
      */
-    protected $description = 'Start all RabbitMQ consumers (product-validated, product-rejected, payment-succeeded, payment-failed)';
+    protected $description = 'Start all RabbitMQ consumers (product-validated, product-rejected, product-stock-confirmed, payment-succeeded, payment-failed)';
 
     /**
      * Execute the console command.
@@ -32,6 +32,7 @@ class ConsumeAll extends Command
         $commands = [
             'consume:product-validated',
             'consume:product-rejected',
+            'consume:product-stock-confirmed',
             'consume:payment-succeeded',
             'consume:payment-failed',
         ];

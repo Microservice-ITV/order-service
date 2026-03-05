@@ -9,6 +9,7 @@ use App\Http\Requests\CheckoutRequest;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class CheckoutController extends Controller
 {
@@ -20,9 +21,10 @@ class CheckoutController extends Controller
     {
         try {
             $result = $this->checkoutService->startCheckout(
-                items: $request->validated('items'),
-                userId: $request->validated('user_id'),
-                rawIdempotencyKey: $request->validated('idempotency_key')
+                $request->validated('items'),
+                $request->validated('user_id'),
+                $request->validated('idempotency_key'),
+                $request->validated('delivery_address')
             );
         } catch (BusinessException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatus(), $e->getData());
@@ -34,6 +36,36 @@ class CheckoutController extends Controller
         }
 
         return $this->successResponse($checkout->id, $checkout->getExpireAtIso());
+    }
+
+    public function updateAddress(Request $request, string $checkoutId): JsonResponse
+    {
+        $validated = $request->validate($this->deliveryAddressRules());
+
+        $result = $this->checkoutService->updateDeliveryAddress(
+            checkoutId: $checkoutId,
+            deliveryAddress: $validated
+        );
+
+        if ($result['not_found'] === true) {
+            return response()->json([
+                'error' => 'Checkout session not found',
+            ], 404);
+        }
+
+        if ($result['invalid_state'] === true) {
+            return response()->json([
+                'checkout_id' => $checkoutId,
+                'error' => 'Delivery address cannot be updated in current state',
+                'status' => $result['status'],
+            ], 409);
+        }
+
+        return response()->json([
+            'checkout_id' => $checkoutId,
+            'message' => 'Delivery address updated successfully',
+            'address_updated_at' => $result['address_updated_at'],
+        ]);
     }
 
     private function existingOrderResponse(CheckoutSession $checkout): JsonResponse
@@ -65,5 +97,26 @@ class CheckoutController extends Controller
             'error' => $message,
             ...$data,
         ], $status);
+    }
+
+    private function deliveryAddressRules(): array
+    {
+        return [
+            'full_name' => ['required', 'string', 'max:255'],
+            'phone_no' => ['required', 'string', 'max:50'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'country_code' => ['required', 'string', 'max:10'],
+            'country' => ['required', 'string', 'max:120'],
+            'state' => ['nullable', 'string', 'max:120'],
+            'city' => ['required', 'string', 'max:120'],
+            'district' => ['nullable', 'string', 'max:120'],
+            'ward' => ['nullable', 'string', 'max:120'],
+            'address_line_1' => ['required', 'string', 'max:255'],
+            'address_line_2' => ['nullable', 'string', 'max:255'],
+            'postal_code' => ['nullable', 'string', 'max:32'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'delivery_note' => ['nullable', 'string', 'max:500'],
+        ];
     }
 }

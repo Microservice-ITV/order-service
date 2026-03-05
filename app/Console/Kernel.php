@@ -6,6 +6,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 use App\Console\Commands\ConsumeProductValidated;
 use App\Console\Commands\ConsumeProductRejected;
+use App\Console\Commands\ConsumeProductStockConfirmed;
 use App\Console\Commands\ConsumePaymentSucceeded;
 use App\Console\Commands\ConsumePaymentFailed;
 use App\Console\Commands\ConsumeAll;
@@ -16,6 +17,7 @@ class Kernel extends ConsoleKernel
     protected $commands = [
         ConsumeProductValidated::class,
         ConsumeProductRejected::class,
+        ConsumeProductStockConfirmed::class,
         ConsumePaymentSucceeded::class,
         ConsumePaymentFailed::class,
         ConsumeAll::class,
