@@ -164,6 +164,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'amount'         => $amount,
                 'currency'       => $currency ?? 'USD',
                 'reservation_id' => $order->reservation_id,
+                'deliveryAddress' => $checkout->delivery_address,
                 'expire_at'      => $checkout->getExpireAtIso(),
                 'updatedAt'      => is_string($sourceUpdatedAt) && $sourceUpdatedAt !== ''
                     ? $sourceUpdatedAt

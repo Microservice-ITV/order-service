@@ -281,6 +281,68 @@ class CheckoutService
         ];
     }
 
+    public function updateDeliveryAddress(string $checkoutId, array $deliveryAddress): array
+    {
+        /** @var ?CheckoutSession $checkout */
+        $checkout = $this->checkoutSessions->findById($checkoutId);
+        if (!$checkout) {
+            return [
+                'not_found' => true,
+                'invalid_state' => false,
+                'status' => null,
+                'address_updated_at' => null,
+            ];
+        }
+
+        $blockedStatuses = [
+            OrderStatus::PAID,
+            OrderStatus::CANCELLED,
+            OrderStatus::FULFILLED,
+            OrderStatus::PARTIALLY_FULFILLED,
+            OrderStatus::REFUNDED,
+            OrderStatus::PARTIALLY_REFUNDED,
+        ];
+        if (in_array($checkout->status_id, $blockedStatuses, true)) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
+        }
+
+        $updatedAt = now();
+        $updated = $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'delivery_address' => $deliveryAddress,
+                'address_updated_at' => $updatedAt,
+                'updated_at' => $updatedAt,
+            ]
+        );
+
+        if ($updated !== 1) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
+        }
+
+        logger()->info('CHECKOUT_DELIVERY_ADDRESS_UPDATED', [
+            'checkout_id' => $checkoutId,
+            'status' => $checkout->status_id->name,
+        ]);
+
+        return [
+            'not_found' => false,
+            'invalid_state' => false,
+            'status' => $checkout->status_id->name,
+            'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
+        ];
+    }
+
     /**
      * Atomically transition checkout status. Returns true only if exactly one row was updated.
      */
@@ -322,7 +384,7 @@ class CheckoutService
      *
      * @throws BusinessException
      */
-    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey): array
+    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null): array
     {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -352,7 +414,8 @@ class CheckoutService
                 items: $items,
                 validatedItems: $validationData['items'],
                 userId: $userId,
-                idempotencyHash: $idempotencyHash
+                idempotencyHash: $idempotencyHash,
+                deliveryAddress: $deliveryAddress
             );
         } catch (QueryException $e) {
             $errorCode = (int) ($e->errorInfo[1] ?? 0);
@@ -370,9 +433,15 @@ class CheckoutService
         return ['checkout' => $checkout, 'existing' => false];
     }
 
-    private function createCheckoutSessionAndItems(array $items, array $validatedItems, string $userId, string $idempotencyHash): CheckoutSession
+    private function createCheckoutSessionAndItems(
+        array $items,
+        array $validatedItems,
+        string $userId,
+        string $idempotencyHash,
+        ?array $deliveryAddress = null
+    ): CheckoutSession
     {
-        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId) {
+        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress) {
             $now = now();
             $validationByProduct = [];
             foreach ($validatedItems as $validatedItem) {
@@ -396,6 +465,8 @@ class CheckoutService
                 'payment_id'      => null,
                 'correlation_id'  => $idempotencyHash,
                 'expire_at'       => $this->calculateExpireAt(),
+                'delivery_address' => $deliveryAddress,
+                'address_updated_at' => $deliveryAddress !== null ? now() : null,
             ]);
 
             $rows = [];
@@ -486,6 +557,7 @@ class CheckoutService
             'subtotal' => $subtotal,
             'total' => (float) ($checkout->total ?? $subtotal),
             'currency' => $currency,
+            'delivery_address' => $checkout->delivery_address,
             'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),
             'updatedAt' => optional($checkout->updated_at)?->copy()->utc()->toIso8601String(),
             'expires_at' => $checkout->getExpireAtIso(),
