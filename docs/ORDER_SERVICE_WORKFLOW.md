@@ -10,7 +10,7 @@
 flowchart TB
     subgraph F1["① INITIATE CHECKOUT"]
         direction TB
-        FE1[🖥️ Frontend] -->|"Step 1: POST /orders/checkout"| API1[🌐 REST API]
+        FE1[🖥️ Frontend -Checkout Button-] -->|"Step 1: POST /orders/checkout"| API1[🌐 REST API]
         API1 -->|"Step 2: Idempotency-Key header"| OS1[📦 Order Service]
         OS1 -->|"Step 3: POST /products/validate-stock"| PS1[🏭 Product Service]
         PS1 -->|"Step 4: stock_validation, items, pricing"| OS1
@@ -25,7 +25,7 @@ flowchart TB
 
     subgraph F2["② UPDATE DELIVERY ADDRESS"]
         direction TB
-        FE2[🖥️ Frontend] -->|"Step 1: PUT /order/checkout/{id}/address"| API2[🌐 REST API]
+        FE2[🖥️ Frontend -Place Order-] -->|"Step 1: PUT /order/checkout/{id}/address"| API2[🌐 REST API]
         API2 -->|"Step 2: Validate state"| OS2[📦 Order Service]
         OS2 -->|"Step 3: Persist delivery_address"| DB2[(🗄️ DB)]
         OS2 -->|"Step 4: Response"| FE2
@@ -66,11 +66,24 @@ flowchart TB
         direction TB
         MQ5[📨 MQ] -->|"Step 1: product.stock.confirmed"| OS5[📦 Order Service]
         OS5 -->|"Step 2: InboxEvent idempotency"| DB5[(🗄️ DB)]
-        OS5 -->|"Step 3: order.ready_for_fulfillment"| MQ5OUT[📨 MQ]
-        MQ5OUT -->|"Step 4: Delivery Service starts fulfillment"| DS5[🚚 Delivery Service]
+        OS5 -->|"Step 3: Set order status READY_FOR_FULFILLMENT"| DB5
+        OS5 -->|"Step 4: order.ready_for_fulfillment"| MQ5OUT[📨 MQ]
         subgraph P5["Payload"]
             PL5A["product.stock.confirmed: checkout_id, order_id, reservation_id"]
-            PL5B["order.ready_for_fulfillment: order_id, checkout_id, deliveryAddress, items"]
+            PL5B["order.ready_for_fulfillment: ready for packing only (no delivery yet)"]
+        end
+    end
+
+    subgraph F5B["⑤b CREATE SHIPMENT (Admin)"]
+        direction TB
+        ADM5[👤 Admin Panel] -->|"Step 1: POST /orders/{orderId}/create-shipment"| API5B[🌐 REST API]
+        API5B -->|"Step 2: Validate READY_FOR_FULFILLMENT"| OS5B[📦 Order Service]
+        OS5B -->|"Step 3: Persist courier, tracking, status=SHIPPED"| DB5B[(🗄️ DB)]
+        OS5B -->|"Step 4: shipment.created"| MQ5B[📨 MQ]
+        MQ5B -->|"Step 5: Delivery Service creates delivery"| DS5B[🚚 Delivery Service]
+        subgraph P5B["Payload"]
+            PL5BA["Request: courier_code, courier_name, courier_phone, tracking_number?, tracking_url?"]
+            PL5BB["shipment.created: order_id, recipient, addresses, items, courier, tracking"]
         end
     end
 
@@ -129,7 +142,8 @@ flowchart TB
 | —                         | Checkout initiated              | `order.created`             |
 | `product.stock.reserved`  | Create payment intent, pending  | —                           |
 | `payment.completed`       | Create Order, mark paid         | `order.paid`                |
-| `product.stock.confirmed`| —                               | `order.ready_for_fulfillment`|
+| `product.stock.confirmed` | Set READY_FOR_FULFILLMENT       | `order.ready_for_fulfillment`|
+| —                         | Admin create shipment           | `shipment.created`          |
 | `payment.failed`         | Fail checkout                   | `order.cancelled`           |
 | `product.stock.rejected` | Reject checkout                 | `order.cancelled`           |
 | —                         | User cancel                     | `order.cancelled`           |
@@ -141,4 +155,5 @@ flowchart TB
 | POST   | /api/orders/checkout               | Initiate checkout              |
 | PUT    | /api/order/checkout/{id}/address   | Update delivery address        |
 | GET    | /api/orders/checkout-sessions/{id}| Get checkout status           |
+| POST   | /api/orders/{orderId}/create-shipment | Create shipment (admin)     |
 | POST   | /api/orders/checkout-sessions/{id}/cancel | Cancel checkout        |

@@ -11,4 +11,6 @@ interface OrderInterface extends BaseInterface
     public function findByCheckoutId(string $checkoutId): ?Order;
 
     public function updateByCheckoutId(string $checkoutId, array $data): int;
+
+    public function updateByOrderId(string $orderId, array $data): int;
 }

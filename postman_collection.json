@@ -165,7 +165,50 @@
       "response": []
     },
     {
-      "name": "5. Publish Payment Failed Event",
+      "name": "5. Create Shipment (Admin)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "    var jsonData = pm.response.json();",
+              "    console.log('✅ Shipment created for order:', jsonData.order_id);",
+              "    console.log('   Status:', jsonData.status);",
+              "    console.log('   Tracking:', jsonData.tracking_number);",
+              "    console.log('💡 shipment.created event published to RabbitMQ');",
+              "} else {",
+              "    console.log('❌ Failed to create shipment');",
+              "    console.log(pm.response.text());",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"courier_code\": \"JNT\",\n  \"courier_name\": \"J&T Express\",\n  \"courier_phone\": \"+951234567\",\n  \"tracking_number\": \"JT1234567890\",\n  \"tracking_url\": \"https://jtexpress.com/track/JT1234567890\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/orders/{{order_id}}/create-shipment",
+          "host": ["{{base_url}}"],
+          "path": ["api", "orders", "{{order_id}}", "create-shipment"]
+        },
+        "description": "Create shipment for an order in READY_FOR_FULFILLMENT status. Requires order_id (from orders table, e.g. after ORDER_READY_FULFILLMENT_PUBLISHED log). Publishes shipment.created event to RabbitMQ."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Publish Payment Failed Event",
       "event": [
         {
           "listen": "test",

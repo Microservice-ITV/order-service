@@ -36,4 +36,11 @@ final class OrderRepository extends BaseRepository implements OrderInterface
             ->where('checkout_id', $checkoutId)
             ->update($data);
     }
+
+    public function updateByOrderId(string $orderId, array $data): int
+    {
+        return $this->model->newQuery()
+            ->where('order_id', $orderId)
+            ->update($data);
+    }
 }

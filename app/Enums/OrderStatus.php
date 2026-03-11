@@ -16,6 +16,8 @@ enum OrderStatus: int
     case FULFILLED = 10;
     case PARTIALLY_REFUNDED = 11;
     case REFUNDED = 12;
+    case READY_FOR_FULFILLMENT = 13;
+    case SHIPPED = 14;
 }
 
 
