@@ -17,4 +17,5 @@ enum EventTopic: string
     case ORDER_READY_FOR_FULFILLMENT = 'order.ready_for_fulfillment';
     case ORDER_CANCELLED = 'order.cancelled';
     case ORDER_FAILED = 'order.failed';
+    case SHIPMENT_CREATED = 'shipment.created';
 }

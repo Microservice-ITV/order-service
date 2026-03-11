@@ -21,10 +21,17 @@ class Order extends Model
         'reservation_id',
         'payment_id',
         'status_id',
+        'courier_code',
+        'courier_name',
+        'courier_phone',
+        'tracking_number',
+        'tracking_url',
+        'shipment_created_at',
     ];
 
     protected $casts = [
         'status_id' => 'integer',
+        'shipment_created_at' => 'datetime',
     ];
 
     public function checkoutSession(): BelongsTo

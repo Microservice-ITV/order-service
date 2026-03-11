@@ -2,7 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Contracts\OrderInterface;
 use App\Enums\EventTopic;
+use App\Enums\OrderStatus;
 use App\Logging\LogMessage;
 use App\Models\CheckoutItem;
 use App\Services\CheckoutService;
@@ -65,6 +67,11 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             ]);
             return;
         }
+
+        app(OrderInterface::class)->updateByOrderId($orderId, [
+            'status_id' => OrderStatus::READY_FOR_FULFILLMENT->value,
+            'updated_at' => now(),
+        ]);
 
         $checkout->loadMissing('items');
         $eventItems = $checkout->items->map(static function (CheckoutItem $item): array {
