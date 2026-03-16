@@ -12,17 +12,25 @@ use App\Logging\LogMessage;
 
 class ConsumeProductRejected extends BaseConsumer
 {
-    protected $signature = 'consume:product-rejected';
-    protected $description = 'Consume product rejected events';
+    protected $signature = 'consume:stock-rejected|consume:product-rejected';
+    protected $description = 'Consume stock rejected events';
+
+    protected function eventName(): string
+    {
+        return EventTopic::STOCK_REJECTED->value;
+    }
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.product_rejected');
+        return config('rabbitmq.queues.stock_rejected');
     }
 
     protected function routingKeys(): array
     {
-        return [EventTopic::PRODUCT_REJECTED->value];
+        return [
+            EventTopic::STOCK_REJECTED->value,
+            EventTopic::PRODUCT_REJECTED->value,
+        ];
     }
     
     protected function process(array $payload): void

@@ -5,6 +5,10 @@ namespace App\Enums;
 enum EventTopic: string
 {
     case ORDER_CHECKOUT_REQUESTED = 'order.created';
+    case STOCK_RESERVED = 'stock.reserved';
+    case STOCK_REJECTED = 'stock.rejected';
+    case STOCK_CONFIRMED = 'stock.confirmed';
+    // Backward-compatible aliases while older publishers still exist.
     case PRODUCT_VALIDATED = 'product.stock.reserved';
     case PRODUCT_REJECTED = 'product.stock.rejected';
     case PRODUCT_STOCK_CONFIRMED = 'product.stock.confirmed';

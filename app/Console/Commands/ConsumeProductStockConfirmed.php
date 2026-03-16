@@ -14,17 +14,25 @@ use App\Services\RabbitMQ\Publisher;
 
 class ConsumeProductStockConfirmed extends BaseConsumer
 {
-    protected $signature = 'consume:product-stock-confirmed';
-    protected $description = 'Consume product.stock.confirmed events and publish order.ready_for_fulfillment';
+    protected $signature = 'consume:stock-confirmed|consume:product-stock-confirmed';
+    protected $description = 'Consume stock.confirmed events and publish order.ready_for_fulfillment';
+
+    protected function eventName(): string
+    {
+        return EventTopic::STOCK_CONFIRMED->value;
+    }
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.product_stock_confirmed');
+        return config('rabbitmq.queues.stock_confirmed');
     }
 
     protected function routingKeys(): array
     {
-        return [EventTopic::PRODUCT_STOCK_CONFIRMED->value];
+        return [
+            EventTopic::STOCK_CONFIRMED->value,
+            EventTopic::PRODUCT_STOCK_CONFIRMED->value,
+        ];
     }
 
     protected function process(array $payload): void
