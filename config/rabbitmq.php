@@ -11,9 +11,10 @@ return [
     'ssl' => env('RABBITMQ_SSL', false),
 
     'queues' => [
-        'product_reserved' => env('RABBITMQ_QUEUE_PRODUCT_RESERVED'),
-        'product_rejected' => env('RABBITMQ_QUEUE_PRODUCT_REJECTED'),
-        'product_stock_confirmed' => env('RABBITMQ_QUEUE_PRODUCT_STOCK_CONFIRMED'),
+        // Prefer stock.* queue env names, keep product.* as backward-compatible fallback.
+        'stock_reserved' => env('RABBITMQ_QUEUE_STOCK_RESERVED', env('RABBITMQ_QUEUE_PRODUCT_RESERVED')),
+        'stock_rejected' => env('RABBITMQ_QUEUE_STOCK_REJECTED', env('RABBITMQ_QUEUE_PRODUCT_REJECTED')),
+        'stock_confirmed' => env('RABBITMQ_QUEUE_STOCK_CONFIRMED', env('RABBITMQ_QUEUE_PRODUCT_STOCK_CONFIRMED')),
         'payment_completed' => env('RABBITMQ_QUEUE_PAYMENT_COMPLETED'),
         'payment_failed' => env('RABBITMQ_QUEUE_PAYMENT_FAILED'),
     ],

@@ -12,17 +12,25 @@ use App\Logging\LogMessage;
 
 class ConsumeProductValidated extends BaseConsumer
 {
-    protected $signature = 'consume:product-validated';
-    protected $description = 'Consume product validated events';
+    protected $signature = 'consume:stock-reserved|consume:product-validated';
+    protected $description = 'Consume stock reserved events';
+
+    protected function eventName(): string
+    {
+        return EventTopic::STOCK_RESERVED->value;
+    }
 
     protected function queue(): string
     {
-        return config('rabbitmq.queues.product_reserved');
+        return config('rabbitmq.queues.stock_reserved');
     }
 
     protected function routingKeys(): array
     {
-        return [EventTopic::PRODUCT_VALIDATED->value];
+        return [
+            EventTopic::STOCK_RESERVED->value,
+            EventTopic::PRODUCT_VALIDATED->value,
+        ];
     }
 
     protected function process(array $payload): void

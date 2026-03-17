@@ -19,6 +19,11 @@ class ConsumePaymentSucceeded extends BaseConsumer
     protected $signature = 'consume:payment-succeeded';
     protected $description = 'Consume payment succeeded events';
 
+    protected function eventName(): string
+    {
+        return EventTopic::PAYMENT_COMPLETED->value;
+    }
+
     protected function queue(): string
     {
         return config('rabbitmq.queues.payment_completed');

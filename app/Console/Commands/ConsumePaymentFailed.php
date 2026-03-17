@@ -14,6 +14,11 @@ class ConsumePaymentFailed extends BaseConsumer
     protected $signature = 'consume:payment-failed';
     protected $description = 'Consume payment failed events';
 
+    protected function eventName(): string
+    {
+        return EventTopic::PAYMENT_FAILED->value;
+    }
+
     protected function queue(): string
     {
         return config('rabbitmq.queues.payment_failed');
