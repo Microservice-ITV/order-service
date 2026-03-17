@@ -47,7 +47,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
         $reservationId = $data['reservation_id'] ?? null;
 
         if (!$checkoutId || !$orderId) {
-            logger()->warning(LogMessage::PAYMENT_COMPLETED_INVALID_PAYLOAD, [
+            logger()->warning(LogMessage::PRODUCT_STOCK_CONFIRMED_INVALID_PAYLOAD, [
                 'payload' => $payload,
                 'reason' => 'MISSING_CHECKOUT_ID_OR_ORDER_ID',
             ]);
@@ -59,7 +59,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
         $checkoutService = app(CheckoutService::class);
         $checkout = $checkoutService->findById($checkoutId);
         if (!$checkout) {
-            logger()->warning(LogMessage::PAYMENT_COMPLETED_INVALID_PAYLOAD, [
+            logger()->warning(LogMessage::PRODUCT_STOCK_CONFIRMED_INVALID_PAYLOAD, [
                 'checkout_id' => $checkoutId,
                 'reason' => 'CHECKOUT_NOT_FOUND',
             ]);
@@ -68,7 +68,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
 
         $order = $checkout->order;
         if (!$order || $order->order_id !== $orderId) {
-            logger()->warning(LogMessage::PAYMENT_COMPLETED_INVALID_PAYLOAD, [
+            logger()->warning(LogMessage::PRODUCT_STOCK_CONFIRMED_INVALID_PAYLOAD, [
                 'checkout_id' => $checkoutId,
                 'order_id' => $orderId,
                 'reason' => 'ORDER_NOT_FOUND_OR_MISMATCH',
