@@ -18,22 +18,22 @@ final class ProductValidationAndPricingService
      */
     public function validateStockAndFetchPricing(array $items): array
     {
-        $warehouseUrl = (string) (config('services.warehouse.url') ?: config('services.product.url'));
-        $warehouseApiKey = (string) (config('services.warehouse.api_key') ?: config('services.product.api_key'));
+        $productServiceUrl = (string) config('services.product.url');
+        $productApiKey = (string) config('services.product.api_key');
 
         /** @var \Illuminate\Http\Client\Response $response */
         $response = Http::timeout(3)
             ->retry(2, 100)
             ->withHeaders([
                 'Content-Type'  => 'application/json',
-                'X-SERVICE-KEY' => $warehouseApiKey,
+                'X-SERVICE-KEY' => $productApiKey,
             ])
-            ->post(rtrim($warehouseUrl, '/') . '/api/v1/products/validate-stock', [
+            ->post(rtrim($productServiceUrl, '/') . '/api/v1/products/validate-stock', [
                 'items' => $items,
             ]);
 
         if (!$response->ok() || !($response->json('success') ?? false)) {
-            logger('WAREHOUSE STOCK VALIDATION API FAILED', [
+            logger('PRODUCT SERVICE STOCK VALIDATION API FAILED', [
                 'status' => $response->status(),
                 'body'   => $response->json(),
             ]);

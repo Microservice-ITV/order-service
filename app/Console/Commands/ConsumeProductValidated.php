@@ -13,11 +13,11 @@ use App\Logging\LogMessage;
 class ConsumeProductValidated extends BaseConsumer
 {
     protected $signature = 'consume:stock-reserved|consume:product-validated';
-    protected $description = 'Consume stock reserved events';
+    protected $description = 'Consume product.stock.reserved (stock reserved) events from product service';
 
     protected function eventName(): string
     {
-        return EventTopic::STOCK_RESERVED->value;
+        return EventTopic::PRODUCT_VALIDATED->value;
     }
 
     protected function queue(): string
@@ -28,7 +28,6 @@ class ConsumeProductValidated extends BaseConsumer
     protected function routingKeys(): array
     {
         return [
-            EventTopic::STOCK_RESERVED->value,
             EventTopic::PRODUCT_VALIDATED->value,
         ];
     }

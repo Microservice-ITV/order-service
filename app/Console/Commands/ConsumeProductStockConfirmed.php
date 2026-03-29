@@ -15,11 +15,11 @@ use App\Services\RabbitMQ\Publisher;
 class ConsumeProductStockConfirmed extends BaseConsumer
 {
     protected $signature = 'consume:stock-confirmed|consume:product-stock-confirmed';
-    protected $description = 'Consume stock.confirmed events and publish order.ready_for_fulfillment';
+    protected $description = 'Consume product.stock.confirmed events and publish order.ready_for_fulfillment';
 
     protected function eventName(): string
     {
-        return EventTopic::STOCK_CONFIRMED->value;
+        return EventTopic::PRODUCT_STOCK_CONFIRMED->value;
     }
 
     protected function queue(): string
@@ -30,7 +30,6 @@ class ConsumeProductStockConfirmed extends BaseConsumer
     protected function routingKeys(): array
     {
         return [
-            EventTopic::STOCK_CONFIRMED->value,
             EventTopic::PRODUCT_STOCK_CONFIRMED->value,
         ];
     }
