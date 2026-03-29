@@ -17,7 +17,7 @@ class ConsumeProductRejected extends BaseConsumer
 
     protected function eventName(): string
     {
-        return EventTopic::STOCK_REJECTED->value;
+        return EventTopic::PRODUCT_REJECTED->value;
     }
 
     protected function queue(): string
@@ -28,7 +28,6 @@ class ConsumeProductRejected extends BaseConsumer
     protected function routingKeys(): array
     {
         return [
-            EventTopic::STOCK_REJECTED->value,
             EventTopic::PRODUCT_REJECTED->value,
         ];
     }
