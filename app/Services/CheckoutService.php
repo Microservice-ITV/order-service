@@ -443,18 +443,9 @@ class CheckoutService
     {
         return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress) {
             $now = now();
-            $validationByProduct = [];
-            foreach ($validatedItems as $validatedItem) {
-                if (!is_array($validatedItem)) {
-                    continue;
-                }
 
-                $productId = (string) ($validatedItem['product_id'] ?? '');
-                if ($productId === '') {
-                    continue;
-                }
-
-                $validationByProduct[$productId] = $validatedItem;
+            if (count($items) !== count($validatedItems)) {
+                throw new BusinessException('Validation result mismatch', 500);
             }
 
             $checkoutSession = $this->create([
@@ -470,9 +461,9 @@ class CheckoutService
             ]);
 
             $rows = [];
-            foreach ($items as $item) {
+            foreach ($items as $i => $item) {
                 $productId = (string) ($item['product_id'] ?? '');
-                $validatedRow = $validationByProduct[$productId] ?? [];
+                $validatedRow = is_array($validatedItems[$i] ?? null) ? $validatedItems[$i] : [];
                 $unitPrice = $validatedRow['unit_price'] ?? null;
                 if ($productId === '' || !is_numeric($unitPrice)) {
                     throw new BusinessException("Missing price for product {$productId}", 400);
@@ -490,9 +481,14 @@ class CheckoutService
                 $availableStock = $validatedRow['available_stock'] ?? $product['available_stock'] ?? null;
                 $lineTotal = $validatedRow['line_total'] ?? ((float) $unitPrice * (int) ($item['qty'] ?? 0));
 
+                $variantId = isset($item['variant_id']) && $item['variant_id'] !== ''
+                    ? (string) $item['variant_id']
+                    : null;
+
                 $rows[] = [
                     'checkout_id' => $checkoutSession->id,
                     'product_id' => $productId,
+                    'variant_id' => $variantId,
                     'qty' => (int) ($item['qty'] ?? 0),
                     'price' => (float) $unitPrice,
                     'line_total' => (float) $lineTotal,
@@ -522,6 +518,7 @@ class CheckoutService
         $eventItems = $checkout->items->map(static function ($item): array {
             return [
                 'product_id' => $item->product_id,
+                'variant_id' => $item->variant_id ?? null,
                 'sku' => $item->product_sku,
                 'slug' => $item->product_slug,
                 'name' => $item->product_title,

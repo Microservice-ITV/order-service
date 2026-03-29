@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "order-service-collection",
     "name": "Order Service API - Complete Flow",
-    "description": "Order Service - RabbitMQ Event-Driven Testing",
+    "description": "Order Service — checkout, webhooks, shipment.\n\n**Checkout (`POST /api/orders/checkout`)**\n- Header **Idempotency-Key** (required): unique per new checkout attempt (UUID recommended).\n- Body **user_id** (required), **items[]** with **product_id** (UUID), **qty** (min 1), optional **variant_id** (UUID) for SKU/variant lines.\n- Pricing and **SKU snapshot** come from product-service validation — do not send client **price** on items.\n- Optional **delivery_address** (see example).\n\n**Response** returns **checkout_id** (not `order_id`).\n\n**Webhooks** expect **checkout_id** and **correlation_id** (must match `checkout_sessions.correlation_id` — copy from DB after checkout, or from your integration logs). If **WEBHOOK_SECRET** is set, requests need valid HMAC (see order-service webhook middleware).\n\n**Shipment** `POST /api/orders/{{order_id}}/create-shipment` uses **order_id** from the **orders** table (created after payment), not checkout_id.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -15,10 +15,13 @@
             "exec": [
               "if (pm.response.code === 200) {",
               "    var jsonData = pm.response.json();",
-              "    pm.environment.set('order_id', jsonData.order_id);",
-              "    console.log('✅ Order ID saved:', jsonData.order_id);",
+              "    if (jsonData.checkout_id) {",
+              "        pm.collectionVariables.set('checkout_id', jsonData.checkout_id);",
+              "        pm.environment.set('checkout_id', jsonData.checkout_id);",
+              "        console.log('✅ checkout_id saved:', jsonData.checkout_id);",
+              "    }",
               "} else {",
-              "    console.log('❌ Failed to create order');",
+              "    console.log('❌ Checkout failed');",
               "    console.log(pm.response.text());",
               "}"
             ],
@@ -32,18 +35,27 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}",
+            "description": "Unique per checkout; Postman generates a new UUID each send."
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"items\": [\n    {\n      \"product_id\": 1,\n      \"qty\": 2,\n      \"price\": 29.99\n    },\n    {\n      \"product_id\": 2,\n      \"qty\": 1,\n      \"price\": 49.99\n    }\n  ]\n}"
+          "raw": "{\n  \"user_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"items\": [\n    {\n      \"product_id\": \"11111111-1111-1111-1111-111111111111\",\n      \"qty\": 1\n    },\n    {\n      \"product_id\": \"22222222-2222-2222-2222-222222222222\",\n      \"qty\": 2,\n      \"variant_id\": \"33333333-3333-3333-3333-333333333333\"\n    }\n  ],\n  \"delivery_address\": {\n    \"full_name\": \"Test User\",\n    \"phone_no\": \"+1234567890\",\n    \"email\": \"buyer@example.com\",\n    \"country_code\": \"MM\",\n    \"country\": \"Myanmar\",\n    \"city\": \"Yangon\",\n    \"address_line_1\": \"No. 1 Test Street\"\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/orders/checkout",
           "host": ["{{base_url}}"],
           "path": ["api", "orders", "checkout"]
         },
-        "description": "Create a new order. This will trigger ORDER_CHECKOUT_REQUESTED event to RabbitMQ."
+        "description": "Starts checkout: validates stock/pricing with product-service (including **variant_id** lines). Replace **user_id**, **product_id**, and optional **variant_id** with real UUIDs from your catalog. Second line shows variant/SKU path; omit **variant_id** for single-SKU products.\n\nSuccess: `{ \"checkout_id\", \"message\", \"expire_at\" }`."
       },
       "response": []
     },
@@ -56,9 +68,8 @@
             "exec": [
               "if (pm.response.code === 200) {",
               "    console.log('✅ Product Validated event published');",
-              "    console.log('💡 Check your consumer terminal - it should process this message');",
               "} else {",
-              "    console.log('❌ Failed to publish event');",
+              "    console.log('❌ Failed:', pm.response.text());",
               "}"
             ],
             "type": "text/javascript"
@@ -75,14 +86,14 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"order_id\": \"{{order_id}}\",\n  \"total\": 109.97,\n  \"items\": [\n    {\n      \"product_id\": 1,\n      \"qty\": 2,\n      \"price\": 29.99\n    },\n    {\n      \"product_id\": 2,\n      \"qty\": 1,\n      \"price\": 49.99\n    }\n  ]\n}"
+          "raw": "{\n  \"checkout_id\": \"{{checkout_id}}\",\n  \"reservation_id\": \"{{reservation_id}}\",\n  \"correlation_id\": \"{{correlation_id}}\",\n  \"total\": 109.97,\n  \"expire_at\": null\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/webhooks/product/validated",
           "host": ["{{base_url}}"],
           "path": ["api", "webhooks", "product", "validated"]
         },
-        "description": "Simulate Product Service publishing product validation event. Consumer will update order status to pending_payment."
+        "description": "Webhook contract: **checkout_id**, **reservation_id**, **correlation_id** (required). Set collection vars or paste values from DB (`checkout_sessions`) / product-service after reservation."
       },
       "response": []
     },
@@ -95,9 +106,8 @@
             "exec": [
               "if (pm.response.code === 200) {",
               "    console.log('✅ Payment Succeeded event published');",
-              "    console.log('💡 Consumer should confirm the order');",
               "} else {",
-              "    console.log('❌ Failed to publish event');",
+              "    console.log('❌ Failed:', pm.response.text());",
               "}"
             ],
             "type": "text/javascript"
@@ -114,14 +124,14 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+          "raw": "{\n  \"checkout_id\": \"{{checkout_id}}\",\n  \"payment_id\": \"{{payment_id}}\",\n  \"correlation_id\": \"{{correlation_id}}\",\n  \"reservation_id\": \"{{reservation_id}}\",\n  \"amount\": 109.97,\n  \"currency\": \"USD\",\n  \"expire_at\": null\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/webhooks/payment/succeeded",
           "host": ["{{base_url}}"],
           "path": ["api", "webhooks", "payment", "succeeded"]
         },
-        "description": "Simulate Payment Service publishing payment success event. Consumer will confirm the order."
+        "description": "Requires **checkout_id**, **payment_id**, **correlation_id**."
       },
       "response": []
     },
@@ -134,9 +144,8 @@
             "exec": [
               "if (pm.response.code === 200) {",
               "    console.log('✅ Product Rejected event published');",
-              "    console.log('💡 Consumer should reject the order');",
               "} else {",
-              "    console.log('❌ Failed to publish event');",
+              "    console.log('❌ Failed:', pm.response.text());",
               "}"
             ],
             "type": "text/javascript"
@@ -153,14 +162,14 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+          "raw": "{\n  \"checkout_id\": \"{{checkout_id}}\",\n  \"correlation_id\": \"{{correlation_id}}\",\n  \"reason\": \"OUT_OF_STOCK\",\n  \"expire_at\": null\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/webhooks/product/rejected",
           "host": ["{{base_url}}"],
           "path": ["api", "webhooks", "product", "rejected"]
         },
-        "description": "Simulate Product Service publishing product rejection event (out of stock). Consumer will reject the order."
+        "description": "Requires **checkout_id**, **correlation_id**."
       },
       "response": []
     },
@@ -174,12 +183,8 @@
               "if (pm.response.code === 201) {",
               "    var jsonData = pm.response.json();",
               "    console.log('✅ Shipment created for order:', jsonData.order_id);",
-              "    console.log('   Status:', jsonData.status);",
-              "    console.log('   Tracking:', jsonData.tracking_number);",
-              "    console.log('💡 shipment.created event published to RabbitMQ');",
               "} else {",
-              "    console.log('❌ Failed to create shipment');",
-              "    console.log(pm.response.text());",
+              "    console.log('❌ Failed:', pm.response.text());",
               "}"
             ],
             "type": "text/javascript"
@@ -203,7 +208,7 @@
           "host": ["{{base_url}}"],
           "path": ["api", "orders", "{{order_id}}", "create-shipment"]
         },
-        "description": "Create shipment for an order in READY_FOR_FULFILLMENT status. Requires order_id (from orders table, e.g. after ORDER_READY_FULFILLMENT_PUBLISHED log). Publishes shipment.created event to RabbitMQ."
+        "description": "Uses **order_id** (PK on `orders` table), not checkout_id. Set **order_id** after the order row exists (e.g. after payment flow)."
       },
       "response": []
     },
@@ -216,9 +221,8 @@
             "exec": [
               "if (pm.response.code === 200) {",
               "    console.log('✅ Payment Failed event published');",
-              "    console.log('💡 Consumer should mark order as failed');",
               "} else {",
-              "    console.log('❌ Failed to publish event');",
+              "    console.log('❌ Failed:', pm.response.text());",
               "}"
             ],
             "type": "text/javascript"
@@ -235,14 +239,14 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}"
+          "raw": "{\n  \"checkout_id\": \"{{checkout_id}}\",\n  \"payment_id\": \"{{payment_id}}\",\n  \"correlation_id\": \"{{correlation_id}}\",\n  \"reason\": \"INSUFFICIENT_FUNDS\",\n  \"expire_at\": null\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/webhooks/payment/failed",
           "host": ["{{base_url}}"],
           "path": ["api", "webhooks", "payment", "failed"]
         },
-        "description": "Simulate Payment Service publishing payment failure event (insufficient funds, etc). Consumer will mark order as failed."
+        "description": "Requires **checkout_id**, **payment_id**, **correlation_id**, **reason**."
       },
       "response": []
     },
@@ -256,7 +260,7 @@
           "host": ["{{base_url}}"],
           "path": [""]
         },
-        "description": "Test basic connection to verify server is running"
+        "description": "Verify server is reachable."
       },
       "response": []
     }
@@ -268,9 +272,32 @@
       "type": "string"
     },
     {
-      "key": "order_id",
+      "key": "checkout_id",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "correlation_id",
+      "value": "",
+      "type": "string",
+      "description": "Must match checkout_sessions.correlation_id (HMAC of Idempotency-Key)"
+    },
+    {
+      "key": "reservation_id",
+      "value": "",
+      "type": "string",
+      "description": "From product-service after stock reservation"
+    },
+    {
+      "key": "payment_id",
+      "value": "pay_test_001",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string",
+      "description": "orders.order_id — for create-shipment only"
     }
   ]
 }

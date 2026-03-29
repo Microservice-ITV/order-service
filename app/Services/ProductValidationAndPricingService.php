@@ -22,6 +22,18 @@ final class ProductValidationAndPricingService
         $productApiKey = (string) config('services.product.api_key');
 
         /** @var \Illuminate\Http\Client\Response $response */
+        $payloadItems = array_map(static function (array $item): array {
+            $row = [
+                'product_id' => (string) ($item['product_id'] ?? ''),
+                'qty' => (int) ($item['qty'] ?? 0),
+            ];
+            if (!empty($item['variant_id'])) {
+                $row['variant_id'] = (string) $item['variant_id'];
+            }
+
+            return $row;
+        }, $items);
+
         $response = Http::timeout(3)
             ->retry(2, 100)
             ->withHeaders([
@@ -29,7 +41,7 @@ final class ProductValidationAndPricingService
                 'X-SERVICE-KEY' => $productApiKey,
             ])
             ->post(rtrim($productServiceUrl, '/') . '/api/v1/products/validate-stock', [
-                'items' => $items,
+                'items' => $payloadItems,
             ]);
 
         if (!$response->ok() || !($response->json('success') ?? false)) {
