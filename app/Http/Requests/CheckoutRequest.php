@@ -63,6 +63,7 @@ final class CheckoutRequest extends FormRequest
             'delivery_address.delivery_note'   => ['nullable', 'string', 'max:500'],
             // 'items.*.user_id'      => ['nullable', 'string', 'max:64'],
             'items.*.product_id'   => ['required', 'string', 'uuid'],
+            'items.*.variant_id'   => ['nullable', 'string', 'uuid'],
             'items.*.qty'          => ['required', 'integer', 'min:1'],
         ];
     }

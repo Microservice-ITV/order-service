@@ -94,6 +94,7 @@ final class ShipmentService
         $items = $checkout->items->map(static function (CheckoutItem $item): array {
             return [
                 'product_id' => $item->product_id,
+                'variant_id' => $item->variant_id,
                 'sku' => $item->product_sku,
                 'name' => $item->product_title,
                 'qty' => (int) $item->qty,

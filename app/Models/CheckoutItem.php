@@ -17,6 +17,7 @@ class CheckoutItem extends Model
     protected $fillable = [
         'checkout_id',
         'product_id',
+        'variant_id',
         'qty',
         'price',
         'line_total',
