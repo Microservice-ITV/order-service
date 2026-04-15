@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "order-service-collection",
     "name": "Order Service API - Complete Flow",
-    "description": "Order Service — checkout, webhooks, shipment.\n\n**Checkout (`POST /api/orders/checkout`)**\n- Header **Idempotency-Key** (required): unique per new checkout attempt (UUID recommended).\n- Body **user_id** (required), **items[]** with **product_id** (UUID), **qty** (min 1), optional **variant_id** (UUID) for SKU/variant lines.\n- Pricing and **SKU snapshot** come from product-service validation — do not send client **price** on items.\n- Optional **delivery_address** (see example).\n\n**Response** returns **checkout_id** (not `order_id`).\n\n**Webhooks** expect **checkout_id** and **correlation_id** (must match `checkout_sessions.correlation_id` — copy from DB after checkout, or from your integration logs). If **WEBHOOK_SECRET** is set, requests need valid HMAC (see order-service webhook middleware).\n\n**Shipment** `POST /api/orders/{{order_id}}/create-shipment` uses **order_id** from the **orders** table (created after payment), not checkout_id.",
+    "description": "Order Service — checkout, delivery address (with optional shipping), session, internal wallet split, webhooks, shipment.\n\n**Base URL** — set `base_url` (e.g. `http://localhost:8000` or `http://localhost:8001`).\n\n### Checkout & session\n| Method | Path |\n|--------|------|\n| `POST` | `/api/orders/checkout` |\n| `PUT` | `/api/orders/checkout/{checkout_id}/address` — update delivery address; optional **shipping_total** / **shop_shippings** when payment is ready |\n| `PUT` | `/api/order/checkout/{checkout_id}/address` — same (singular alias) |\n| `GET` | `/api/orders/checkout-sessions/{checkout_id}` |\n| `POST` | `/api/orders/checkout-sessions/{checkout_id}/cancel` |\n| `POST` | `/api/orders/{orderId}/create-shipment` |\n| `GET` | `/api/internal/orders/{orderId}/wallet-split?checkout_id=...` — **service-to-service** (Wallet Service); header **x-service-key** |\n\n**`POST /api/orders/checkout`**\n- Header **Idempotency-Key** (required).\n- Body **user_id**, **items[]** (**product_id**, **qty**; optional **variant_id**).\n- Optional **delivery_address** (nested; can be set/updated later via PUT address).\n- Line **shop_id** is resolved from the product catalog when stock is validated (stored on checkout items for multi-shop shipping / wallet split).\n\n**`PUT .../address`** — same delivery fields as before, plus:\n- Optional **shipping_total** (number) and/or **shop_shippings**: `[{ \"shop_id\", \"shipping_fee\" }, ...]`.\n- When shipping is sent, checkout must be **PENDING_PAYMENT** with a **payment_id** already present; **shipping_total** must equal the sum of **shop_shippings** fees (when **shop_shippings** is non-empty). Per-shop fees must cover every shop that has line items (and **shop_id** must exist on those items).\n- Success may include **grand_total**, **shipping_total**, **payment.client_secret**, and **shop_shippings** after a payment-amount update.\n- **502** if payment intent amount update fails; **409** for state/shipping validation errors.\n\n### Internal wallet split\nUsed by Wallet Service after payment. Requires **`WALLET_SERVICE_API_KEY`** as **`x-service-key`** (must match Wallet Service’s Order Service key). Query **`checkout_id`** is required and must belong to the order.\n\n### Webhooks (`/api/webhooks/...`)\nMiddleware may require HMAC when **WEBHOOK_SECRET** is set. Payloads need **checkout_id** and **correlation_id** where applicable.\n\n**Shipment** uses **order_id** from the **orders** table (after payment), not `checkout_id`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -48,19 +48,92 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"user_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"items\": [\n    {\n      \"product_id\": \"11111111-1111-1111-1111-111111111111\",\n      \"qty\": 1\n    },\n    {\n      \"product_id\": \"22222222-2222-2222-2222-222222222222\",\n      \"qty\": 2,\n      \"variant_id\": \"33333333-3333-3333-3333-333333333333\"\n    }\n  ],\n  \"delivery_address\": {\n    \"full_name\": \"Test User\",\n    \"phone_no\": \"+1234567890\",\n    \"email\": \"buyer@example.com\",\n    \"country_code\": \"MM\",\n    \"country\": \"Myanmar\",\n    \"city\": \"Yangon\",\n    \"address_line_1\": \"No. 1 Test Street\"\n  }\n}"
+          "raw": "{\n  \"user_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"items\": [\n    {\n      \"product_id\": \"11111111-1111-1111-1111-111111111111\",\n      \"qty\": 1\n    },\n    {\n      \"product_id\": \"22222222-2222-2222-2222-222222222222\",\n      \"qty\": 2,\n      \"variant_id\": \"33333333-3333-3333-3333-333333333333\"\n    }\n  ],\n  \"delivery_address\": {\n    \"full_name\": \"Test User\",\n    \"phone_no\": \"+1234567890\",\n    \"email\": \"buyer@example.com\",\n    \"country_code\": \"MM\",\n    \"country\": \"Myanmar\",\n    \"city\": \"Yangon\",\n    \"address_line_1\": \"No. 1 Test Street\",\n    \"latitude\": 16.8661,\n    \"longitude\": 96.1951\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/orders/checkout",
           "host": ["{{base_url}}"],
           "path": ["api", "orders", "checkout"]
         },
-        "description": "Starts checkout: validates stock/pricing with product-service (including **variant_id** lines). Replace **user_id**, **product_id**, and optional **variant_id** with real UUIDs from your catalog. Second line shows variant/SKU path; omit **variant_id** for single-SKU products.\n\nSuccess: `{ \"checkout_id\", \"message\", \"expire_at\" }`."
+        "description": "Starts checkout: validates stock/pricing with product-service (including **variant_id** lines). Replace **user_id**, **product_id**, and optional **variant_id** with real UUIDs from your catalog. **shop_id** on persisted line items comes from the product service during validation.\n\nSuccess: `{ \"checkout_id\", \"message\", \"expire_at\" }`."
       },
       "response": []
     },
     {
-      "name": "2. Publish Product Validated Event",
+      "name": "2. Get Checkout Session",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/orders/checkout-sessions/{{checkout_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "orders", "checkout-sessions", "{{checkout_id}}"]
+        },
+        "description": "Returns **checkout_id**, **status** (enum name as string), and **payment** (`payment_id`, `client_secret`) when a payment intent exists. **404** if session not found."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Update Delivery Address",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"full_name\": \"Test User\",\n  \"phone_no\": \"+1234567890\",\n  \"email\": \"buyer@example.com\",\n  \"country_code\": \"MM\",\n  \"country\": \"Myanmar\",\n  \"state\": \"Yangon Region\",\n  \"city\": \"Yangon\",\n  \"district\": \"Downtown\",\n  \"ward\": \"Ward 1\",\n  \"address_line_1\": \"No. 1 Test Street\",\n  \"address_line_2\": \"Building A\",\n  \"postal_code\": \"11181\",\n  \"latitude\": 16.8661,\n  \"longitude\": 96.1951,\n  \"delivery_note\": \"Ring doorbell\",\n  \"shipping_total\": 15.0,\n  \"shop_shippings\": [\n    { \"shop_id\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\", \"shipping_fee\": 10.0 },\n    { \"shop_id\": \"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\", \"shipping_fee\": 5.0 }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/orders/checkout/{{checkout_id}}/address",
+          "host": ["{{base_url}}"],
+          "path": ["api", "orders", "checkout", "{{checkout_id}}", "address"]
+        },
+        "description": "Updates delivery address on the checkout session. Omit **shipping_total** / **shop_shippings** to update address only.\n\n**Shipping (optional):** When set, checkout must be **PENDING_PAYMENT** with **payment_id** set. **shipping_total** must match the sum of **shop_shippings** (±0.02) when **shop_shippings** is provided. Every shop that has cart lines must appear in **shop_shippings** (and line items need **shop_id** from catalog validation).\n\nSuccess may return **grand_total**, **shipping_total**, **payment** `{ \"client_secret\" }`, and **shop_shippings**. **404** if not found; **409** if state/shipping rules fail; **502** if updating the payment intent amount fails.\n\n**Alias:** `PUT {{base_url}}/api/order/checkout/{{checkout_id}}/address` (singular `order`)."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Cancel Checkout Session",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"USER_CANCELLED\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/orders/checkout-sessions/{{checkout_id}}/cancel",
+          "host": ["{{base_url}}"],
+          "path": ["api", "orders", "checkout-sessions", "{{checkout_id}}", "cancel"]
+        },
+        "description": "Optional body **reason** (string). **404** if session not found; **409** if cancellation is not allowed in current state."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Publish Product Validated Event",
       "event": [
         {
           "listen": "test",
@@ -98,7 +171,7 @@
       "response": []
     },
     {
-      "name": "3. Publish Payment Succeeded Event",
+      "name": "6. Publish Payment Succeeded Event",
       "event": [
         {
           "listen": "test",
@@ -136,7 +209,7 @@
       "response": []
     },
     {
-      "name": "4. Publish Product Rejected Event",
+      "name": "7. Publish Product Rejected Event",
       "event": [
         {
           "listen": "test",
@@ -174,7 +247,7 @@
       "response": []
     },
     {
-      "name": "5. Create Shipment (Admin)",
+      "name": "8. Create Shipment (Admin)",
       "event": [
         {
           "listen": "test",
@@ -213,7 +286,38 @@
       "response": []
     },
     {
-      "name": "6. Publish Payment Failed Event",
+      "name": "9. Internal — GET wallet split (Wallet Service)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "x-service-key",
+            "value": "{{wallet_service_key}}",
+            "description": "Must match order-service WALLET_SERVICE_API_KEY (same value Wallet Service uses as ORDER_SERVICE_API_KEY when calling order-service)."
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/internal/orders/{{order_id}}/wallet-split?checkout_id={{checkout_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "internal", "orders", "{{order_id}}", "wallet-split"],
+          "query": [
+            {
+              "key": "checkout_id",
+              "value": "{{checkout_id}}",
+              "description": "Required. Must match the order's checkout session."
+            }
+          ]
+        },
+        "description": "Service-to-service: per-shop **net_payout** and **platform_commission** for ledger distribution. Requires checkout lines to have **shop_id** and consistent **shipping_total** / **checkout_shop_shipping** data.\n\n**200** body shape: `order_id`, `checkout_id`, `currency`, `total`, `platform_commission`, `shops`: `[{ \"shop_id\", \"net_payout\" }, ...]` (amounts as decimal strings).\n\n**401** invalid/missing **x-service-key**; **404** order or checkout not found; **422** missing **checkout_id**, mismatch, or items without **shop_id**; **503** if wallet internal API key is not configured."
+      },
+      "response": []
+    },
+    {
+      "name": "10. Publish Payment Failed Event",
       "event": [
         {
           "listen": "test",
@@ -251,7 +355,7 @@
       "response": []
     },
     {
-      "name": "Test Server Connection",
+      "name": "11. Test Server Connection",
       "request": {
         "method": "GET",
         "header": [],
@@ -297,7 +401,13 @@
       "key": "order_id",
       "value": "",
       "type": "string",
-      "description": "orders.order_id — for create-shipment only"
+      "description": "orders.order_id — for create-shipment and internal wallet-split"
+    },
+    {
+      "key": "wallet_service_key",
+      "value": "",
+      "type": "string",
+      "description": "Same as WALLET_SERVICE_API_KEY in order-service .env (sent as x-service-key)"
     }
   ]
 }

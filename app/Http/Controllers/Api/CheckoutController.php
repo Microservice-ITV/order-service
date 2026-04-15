@@ -40,11 +40,41 @@ class CheckoutController extends Controller
 
     public function updateAddress(Request $request, string $checkoutId): JsonResponse
     {
-        $validated = $request->validate($this->deliveryAddressRules());
+        $validated = $request->validate(array_merge($this->deliveryAddressRules(), [
+            'shipping_total' => ['nullable', 'numeric', 'min:0'],
+            'shop_shippings' => ['nullable', 'array'],
+            'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
+            'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
+        ]));
+
+        if (!array_key_exists('shipping_total', $validated)) {
+            $shippingTotal = null;
+        } else {
+            $shippingTotal = $validated['shipping_total'] === null ? null : (float) $validated['shipping_total'];
+        }
+        unset($validated['shipping_total']);
+
+        $shopShippings = null;
+        if (
+            isset($validated['shop_shippings'])
+            && is_array($validated['shop_shippings'])
+            && $validated['shop_shippings'] !== []
+        ) {
+            $shopShippings = array_map(
+                static fn (array $row): array => [
+                    'shop_id' => (string) $row['shop_id'],
+                    'shipping_fee' => (float) $row['shipping_fee'],
+                ],
+                $validated['shop_shippings']
+            );
+        }
+        unset($validated['shop_shippings']);
 
         $result = $this->checkoutService->updateDeliveryAddress(
             checkoutId: $checkoutId,
-            deliveryAddress: $validated
+            deliveryAddress: $validated,
+            shippingTotal: $shippingTotal,
+            shopShippings: $shopShippings
         );
 
         if ($result['not_found'] === true) {
@@ -53,19 +83,52 @@ class CheckoutController extends Controller
             ], 404);
         }
 
-        if ($result['invalid_state'] === true) {
+        if (!empty($result['payment_update_failed'])) {
             return response()->json([
                 'checkout_id' => $checkoutId,
-                'error' => 'Delivery address cannot be updated in current state',
+                'error' => 'Failed to update payment amount for checkout',
+                'detail' => $result['payment_error'] ?? null,
+                'status' => $result['status'],
+            ], 502);
+        }
+
+        if ($result['invalid_state'] === true) {
+            $message = match ($result['reason'] ?? null) {
+                'shipping_requires_pending_payment' => 'Shipping can only be finalized while checkout is awaiting payment',
+                'payment_not_ready' => 'Payment is not ready yet; wait for stock confirmation to complete',
+                'shipping_total_mismatch' => 'shipping_total must match the sum of shop_shippings',
+                'shipping_missing_for_shop' => 'Provide a shipping fee for each shop that has items in this checkout',
+                'unknown_shop_in_shipping' => 'shop_shippings contains a shop_id that is not in this checkout',
+                'checkout_items_missing_shop_id' => 'Cart line items must include shop_id to use per-shop shipping',
+                'shop_shippings_invalid' => 'shop_shippings could not be applied (empty or invalid shop ids)',
+                default => 'Delivery address cannot be updated in current state',
+            };
+
+            return response()->json([
+                'checkout_id' => $checkoutId,
+                'error' => $message,
                 'status' => $result['status'],
             ], 409);
         }
 
-        return response()->json([
+        $payload = [
             'checkout_id' => $checkoutId,
             'message' => 'Delivery address updated successfully',
             'address_updated_at' => $result['address_updated_at'],
-        ]);
+        ];
+
+        if (isset($result['grand_total'], $result['shipping_total'], $result['client_secret'])) {
+            $payload['grand_total'] = $result['grand_total'];
+            $payload['shipping_total'] = $result['shipping_total'];
+            $payload['payment'] = [
+                'client_secret' => $result['client_secret'],
+            ];
+            if (!empty($result['shop_shippings'])) {
+                $payload['shop_shippings'] = $result['shop_shippings'];
+            }
+        }
+
+        return response()->json($payload);
     }
 
     private function existingOrderResponse(CheckoutSession $checkout): JsonResponse

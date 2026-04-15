@@ -95,6 +95,7 @@ final class ShipmentService
             return [
                 'product_id' => $item->product_id,
                 'variant_id' => $item->variant_id,
+                'shop_id' => $item->shop_id !== null ? (string) $item->shop_id : null,
                 'sku' => $item->product_sku,
                 'name' => $item->product_title,
                 'qty' => (int) $item->qty,

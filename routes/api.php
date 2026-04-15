@@ -3,8 +3,15 @@
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CheckoutSessionController;
 use App\Http\Controllers\Api\CreateShipmentController;
+use App\Http\Controllers\Api\Internal\WalletSplitController;
 use App\Http\Controllers\Api\WebhookController;
 use Illuminate\Support\Facades\Route;
+
+// Wallet Service (service-to-service): per-shop payout split for ledger distribution
+Route::middleware('wallet.internal')->prefix('internal/orders')->group(function () {
+    Route::get('{orderId}/wallet-split', [WalletSplitController::class, 'show'])
+        ->name('internal.orders.wallet-split');
+});
 
 // Order Management Routes (auth handled by auth-service / API gateway if needed)
 Route::controller(CheckoutController::class)->prefix('orders')->group(function () {

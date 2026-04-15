@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
             'webhook.signature' => \App\Http\Middleware\VerifyWebhookSignature::class,
+            'wallet.internal' => \App\Http\Middleware\VerifyWalletInternalKey::class,
         ]);
         
         // XSS Protection Middleware

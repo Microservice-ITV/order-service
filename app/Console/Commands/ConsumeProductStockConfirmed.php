@@ -84,13 +84,19 @@ class ConsumeProductStockConfirmed extends BaseConsumer
         $eventItems = $checkout->items->map(static function (CheckoutItem $item): array {
             return [
                 'product_id' => $item->product_id,
+                'variant_id' => $item->variant_id,
+                'shop_id' => $item->shop_id !== null ? (string) $item->shop_id : null,
                 'sku' => $item->product_sku,
                 'slug' => $item->product_slug,
                 'name' => $item->product_title,
+                'description' => $item->product_description,
+                'image_url' => $item->image_url,
+                'category_id' => $item->category_id,
                 'qty' => (int) $item->qty,
                 'unit_price' => (float) $item->price,
                 'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
                 'currency' => $item->currency ?? 'USD',
+                'available_stock' => $item->available_stock !== null ? (int) $item->available_stock : null,
             ];
         })->values()->all();
 
