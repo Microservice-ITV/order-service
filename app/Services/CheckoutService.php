@@ -9,6 +9,8 @@ use App\Enums\OrderStatus;
 use App\Exceptions\BusinessException;
 use App\Logging\LogMessage;
 use App\Services\EventPayloadBuilder;
+use App\Models\CheckoutItem;
+use App\Models\CheckoutShopShipping;
 use App\Models\CheckoutSession;
 use App\Services\ProductValidationAndPricingService;
 use App\Services\RabbitMQ\Publisher;
@@ -22,7 +24,8 @@ class CheckoutService
     public function __construct(
         private readonly CheckoutSessionInterface $checkoutSessions,
         private readonly CheckoutItemInterface $checkoutItems,
-        private readonly ProductValidationAndPricingService $pricingService
+        private readonly ProductValidationAndPricingService $pricingService,
+        private readonly PaymentService $paymentService
     ) {}
 
     /**
@@ -281,8 +284,27 @@ class CheckoutService
         ];
     }
 
-    public function updateDeliveryAddress(string $checkoutId, array $deliveryAddress): array
-    {
+    /**
+     * @return array{
+     *   not_found: bool,
+     *   invalid_state: bool,
+     *   reason?: string,
+     *   payment_update_failed?: bool,
+     *   payment_error?: string,
+     *   status: ?string,
+     *   address_updated_at: ?string,
+     *   grand_total?: float,
+     *   shipping_total?: float,
+     *   client_secret?: string,
+     *   shop_shippings?: list<array{shop_id: string, shipping_fee: float}>
+     * }
+     */
+    public function updateDeliveryAddress(
+        string $checkoutId,
+        array $deliveryAddress,
+        ?float $shippingTotal = null,
+        ?array $shopShippings = null
+    ): array {
         /** @var ?CheckoutSession $checkout */
         $checkout = $this->checkoutSessions->findById($checkoutId);
         if (!$checkout) {
@@ -308,6 +330,165 @@ class CheckoutService
                 'invalid_state' => true,
                 'status' => $checkout->status_id->name,
                 'address_updated_at' => null,
+            ];
+        }
+
+        $currency = null;
+
+        $effectiveShipping = null;
+        $normalizedShopShippings = null;
+        if ($shopShippings !== null && $shopShippings !== []) {
+            $normalizedShopShippings = $this->normalizeShopShippingsPayload($shopShippings);
+            if ($normalizedShopShippings === []) {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'shop_shippings_invalid',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+            $computedShipping = $this->sumShopShippingFees($normalizedShopShippings);
+            if ($shippingTotal !== null && abs($computedShipping - $shippingTotal) > 0.02) {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'shipping_total_mismatch',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+            $effectiveShipping = $computedShipping;
+
+            $shopError = $this->validateShopShippingsAgainstItems($checkoutId, $normalizedShopShippings);
+            if ($shopError !== null) {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => $shopError,
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+        } elseif ($shippingTotal !== null) {
+            $effectiveShipping = $shippingTotal;
+        }
+
+        if ($effectiveShipping !== null) {
+            if ($checkout->status_id !== OrderStatus::PENDING_PAYMENT) {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'shipping_requires_pending_payment',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+            if ($checkout->payment_id === null || $checkout->payment_id === '') {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'payment_not_ready',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            $itemsSubtotal = $this->calculateCheckoutItemsSubtotal($checkoutId);
+            $grandTotal = round($itemsSubtotal + $effectiveShipping, 2);
+
+            $firstItem = CheckoutItem::query()->where('checkout_id', $checkoutId)->first();
+            $currency = $firstItem && $firstItem->currency ? (string) $firstItem->currency : 'USD';
+
+            try {
+                $paymentResult = $this->paymentService->updatePaymentIntentAmount(
+                    $checkoutId,
+                    $grandTotal,
+                    $currency
+                );
+            } catch (\RuntimeException $e) {
+                logger()->error('CHECKOUT_PAYMENT_INTENT_UPDATE_FAILED', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'not_found' => false,
+                    'invalid_state' => false,
+                    'payment_update_failed' => true,
+                    'payment_error' => $e->getMessage(),
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            $updatedAt = now();
+
+            try {
+                DB::transaction(function () use (
+                    $checkoutId,
+                    $deliveryAddress,
+                    $updatedAt,
+                    $grandTotal,
+                    $effectiveShipping,
+                    $normalizedShopShippings,
+                    $paymentResult
+                ): void {
+                    $updated = $this->checkoutSessions->updateWhere(
+                        [['id', '=', $checkoutId]],
+                        [
+                            'delivery_address' => $deliveryAddress,
+                            'address_updated_at' => $updatedAt,
+                            'shipping_total' => $effectiveShipping,
+                            'total' => $grandTotal,
+                            'client_secret' => $paymentResult['client_secret'],
+                            'updated_at' => $updatedAt,
+                        ]
+                    );
+
+                    if ($updated !== 1) {
+                        throw new \RuntimeException('checkout_session_update_failed');
+                    }
+
+                    if ($normalizedShopShippings !== null) {
+                        $this->replaceCheckoutShopShippingRows($checkoutId, $normalizedShopShippings);
+                    } else {
+                        CheckoutShopShipping::query()->where('checkout_id', $checkoutId)->delete();
+                    }
+                });
+            } catch (\Throwable $e) {
+                logger()->error('CHECKOUT_PERSIST_AFTER_PAYMENT_INTENT_UPDATE', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'not_found' => false,
+                    'invalid_state' => false,
+                    'payment_update_failed' => true,
+                    'payment_error' => 'Payment amount was updated but saving checkout details failed; contact support with your checkout id.',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            logger()->info('CHECKOUT_DELIVERY_AND_SHIPPING_UPDATED', [
+                'checkout_id' => $checkoutId,
+                'status' => $checkout->status_id->name,
+                'grand_total' => $grandTotal,
+                'shipping_total' => $effectiveShipping,
+                'per_shop' => $normalizedShopShippings !== null,
+            ]);
+
+            return [
+                'not_found' => false,
+                'invalid_state' => false,
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
+                'grand_total' => $grandTotal,
+                'shipping_total' => $effectiveShipping,
+                'client_secret' => $paymentResult['client_secret'],
+                'shop_shippings' => $normalizedShopShippings,
             ];
         }
 
@@ -341,6 +522,107 @@ class CheckoutService
             'status' => $checkout->status_id->name,
             'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
         ];
+    }
+
+    private function calculateCheckoutItemsSubtotal(string $checkoutId): float
+    {
+        return (float) CheckoutItem::query()
+            ->where('checkout_id', $checkoutId)
+            ->get()
+            ->sum(static function (CheckoutItem $item): float {
+                if ($item->line_total !== null) {
+                    return (float) $item->line_total;
+                }
+
+                return (float) $item->price * (int) $item->qty;
+            });
+    }
+
+    /**
+     * @param  list<array{shop_id: string, shipping_fee: float}>  $rows
+     * @return list<array{shop_id: string, shipping_fee: float}>
+     */
+    private function normalizeShopShippingsPayload(array $rows): array
+    {
+        $byShop = [];
+        foreach ($rows as $row) {
+            $sid = isset($row['shop_id']) ? trim((string) $row['shop_id']) : '';
+            if ($sid === '') {
+                continue;
+            }
+            $fee = round((float) ($row['shipping_fee'] ?? 0), 2);
+            if (!isset($byShop[$sid])) {
+                $byShop[$sid] = 0.0;
+            }
+            $byShop[$sid] += $fee;
+        }
+
+        $out = [];
+        foreach ($byShop as $shopId => $sum) {
+            $out[] = ['shop_id' => $shopId, 'shipping_fee' => round($sum, 2)];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  list<array{shop_id: string, shipping_fee: float}>  $rows
+     */
+    private function sumShopShippingFees(array $rows): float
+    {
+        return round(array_sum(array_column($rows, 'shipping_fee')), 2);
+    }
+
+    /**
+     * @param  list<array{shop_id: string, shipping_fee: float}>  $normalizedRows
+     */
+    private function validateShopShippingsAgainstItems(string $checkoutId, array $normalizedRows): ?string
+    {
+        $cartShops = CheckoutItem::query()
+            ->where('checkout_id', $checkoutId)
+            ->get()
+            ->pluck('shop_id')
+            ->filter(static fn ($s) => $s !== null && $s !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($cartShops === []) {
+            return 'checkout_items_missing_shop_id';
+        }
+
+        $feeShops = array_column($normalizedRows, 'shop_id');
+        foreach ($cartShops as $sid) {
+            if (!in_array($sid, $feeShops, true)) {
+                return 'shipping_missing_for_shop';
+            }
+        }
+        foreach ($feeShops as $sid) {
+            if (!in_array($sid, $cartShops, true)) {
+                return 'unknown_shop_in_shipping';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<array{shop_id: string, shipping_fee: float}>  $normalizedRows
+     */
+    private function replaceCheckoutShopShippingRows(string $checkoutId, array $normalizedRows): void
+    {
+        CheckoutShopShipping::query()->where('checkout_id', $checkoutId)->delete();
+        $now = now();
+        foreach ($normalizedRows as $row) {
+            CheckoutShopShipping::query()->insert([
+                'id' => (string) Str::uuid(),
+                'checkout_id' => $checkoutId,
+                'shop_id' => $row['shop_id'],
+                'shipping_fee' => $row['shipping_fee'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
     }
 
     /**

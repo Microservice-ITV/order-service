@@ -26,6 +26,7 @@ class CheckoutSession extends Model
         'id',
         'status_id',
         'total',
+        'shipping_total',
         'failure_reason',
         'idempotency_key',
         'user_id',
@@ -48,6 +49,11 @@ class CheckoutSession extends Model
     public function items(): HasMany
     {
         return $this->hasMany(CheckoutItem::class, 'checkout_id');
+    }
+
+    public function shopShippings(): HasMany
+    {
+        return $this->hasMany(CheckoutShopShipping::class, 'checkout_id');
     }
 
     public function order(): HasOne

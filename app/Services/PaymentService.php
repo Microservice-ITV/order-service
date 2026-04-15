@@ -70,5 +70,66 @@ final class PaymentService
             'client_secret' => $payload['clientSecret'],
         ];
     }
+
+    /**
+     * Update an existing pending payment intent amount (e.g. after shipping is finalized).
+     *
+     * PATCH /api/v1/payments/intents/{checkout_id}
+     */
+    public function updatePaymentIntentAmount(
+        string $checkoutId,
+        float $amount,
+        ?string $currency = null
+    ): array {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+
+        $payload = ['amount' => $amount];
+        if ($currency !== null) {
+            $payload['currency'] = $currency;
+        }
+
+        logger()->info('PAYMENT_INTENT_UPDATE_REQUEST', [
+            'url' => $baseUrl . '/api/v1/payments/intents/' . $checkoutId,
+            'payload' => $payload,
+        ]);
+
+        /** @var \Illuminate\Http\Client\Response $response */
+        $response = Http::timeout(15)
+            ->retry(2, 200)
+            ->withHeaders([
+                'Content-Type'  => 'application/json',
+                'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+            ])
+            ->patch($baseUrl . '/api/v1/payments/intents/' . rawurlencode($checkoutId), $payload);
+
+        if (!$response->successful()) {
+            logger()->error('PAYMENT_INTENT_UPDATE_FAILED', [
+                'status' => $response->status(),
+                'body' => $response->json(),
+            ]);
+            $body = $response->json();
+            $err = is_array($body) && isset($body['error']['message'])
+                ? (string) $body['error']['message']
+                : $response->body();
+            throw new \RuntimeException('Failed to update payment intent: ' . $err);
+        }
+
+        $responseData = $response->json();
+        $data = is_array($responseData) ? ($responseData['data'] ?? null) : null;
+
+        if (!is_array($data) || empty($data['paymentId']) || empty($data['clientSecret'])) {
+            logger()->error('PAYMENT_INTENT_UPDATE_INVALID_RESPONSE', [
+                'body' => $responseData,
+            ]);
+            throw new \RuntimeException('Invalid payment intent update response');
+        }
+
+        return [
+            'payment_id' => $data['paymentId'],
+            'client_secret' => $data['clientSecret'],
+            'amount' => (float) ($data['amount'] ?? $amount),
+            'expires_at' => isset($data['expiresAt']) ? (string) $data['expiresAt'] : null,
+        ];
+    }
 }
 
