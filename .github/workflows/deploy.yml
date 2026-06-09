@@ -1,0 +1,137 @@
+name: 🚀 Auth Service Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    name: 🐳 Build & Push Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      #################################################
+      # Docker Hub Login
+      #################################################
+      - name: 🐳 Docker Hub Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      #################################################
+      # Build & Push App Image
+      #################################################
+      - name: 🏗️ Build & Push App Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/prod/php/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/authservice-app:latest
+            ${{ secrets.DOCKER_USERNAME }}/authservice-app:${{ github.sha }}
+
+      #################################################
+      # Build & Push Nginx Image
+      #################################################
+      - name: 🏗️ Build & Push Nginx Image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/prod/nginx
+          file: docker/prod/nginx/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/authservice-nginx:latest
+            ${{ secrets.DOCKER_USERNAME }}/authservice-nginx:${{ github.sha }}
+
+      #################################################
+      # Build & Push MySQL Image
+      #################################################
+      - name: 🏗️ Build & Push MySQL Image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/prod/mysql
+          file: docker/prod/mysql/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/authservice-mysql:latest
+            ${{ secrets.DOCKER_USERNAME }}/authservice-mysql:${{ github.sha }}
+
+  #####################################################
+  # DEPLOY TO VPS
+  #####################################################
+  deploy:
+    name: 🚀 Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: 🚀 SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+
+          script: |
+
+            set -e
+
+            echo "🚀 Deploying Auth Service..."
+
+            ##################################################
+            # 1. Clone or update repo
+            ##################################################
+            if [ ! -d "/var/www/html/microservices/auth-service" ]; then
+              git clone git@github.com:Microservice-ITV/auth-service.git \
+              /var/www/html/microservices/auth-service
+            fi
+
+            cd /var/www/html/microservices/auth-service
+
+            git fetch origin
+            git reset --hard origin/main
+
+            ##################################################
+            # 📄 Create env files on server
+            ##################################################
+            echo "📄 Creating prod.env..."
+            cat > prod.env <<EOF
+            ${{ secrets.PROD_ENV }}
+            EOF
+            chmod 600 prod.env
+
+            echo "📄 Creating .env (Laravel)..."
+            cat > src/.env <<EOF
+            ${{ secrets.LARAVEL_ENV }}
+            EOF
+            chmod 600 src/.env
+
+            ##################################################
+            # 2. Docker Login (for pulling private images)
+            ##################################################
+            echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            ##################################################
+            # 3. Pull latest images
+            ##################################################
+            docker compose -f docker-compose-prod.yml --env-file prod.env pull
+
+            ##################################################
+            # 4. Restart containers
+            ##################################################
+            docker compose -f docker-compose-prod.yml --env-file prod.env up -d
+
+            ##################################################
+            # 5. Cleanup
+            ##################################################
+            docker image prune -f
+            docker system prune -f
+
+            echo "✅ Auth Service Deployment Successful!"

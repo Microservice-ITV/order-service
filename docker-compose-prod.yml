@@ -1,0 +1,66 @@
+name: authservice
+
+networks:
+  app-network:
+    name: ${NETWORK_NAME}
+    external: true
+
+services:
+  app:
+    image: yelinnoo/authservice-app:latest
+    container_name: authservice-${PHP_CONTAINER_NAME}
+    restart: always
+    env_file: prod.env
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_KEY: ${APP_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f php-fpm || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  mysql:
+    image: yelinnoo/authservice-mysql:latest
+    container_name: authservice-${DB_CONTAINER_NAME}
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+
+  nginx:
+    image: yelinnoo/authservice-nginx:latest
+    container_name: authservice-${NGINX_CONTAINER_NAME}
+    restart: always
+    ports:
+      - "80"
+    depends_on:
+      - app
+    networks:
+      - app-network
+
+volumes:
+  mysql_data:
