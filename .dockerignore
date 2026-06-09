@@ -1,0 +1,42 @@
+# Git / IDE
+.git
+.gitignore
+.gitattributes
+.editorconfig
+.idea
+.vscode
+*.md
+
+# Local env (compose injects vars)
+.env
+.env.*
+!.env.example
+
+# Dependencies — installed in image
+node_modules
+vendor
+
+# Vite output — built in assets stage
+public/build
+
+# Laravel caches / logs — runtime
+storage/framework/cache/*
+!storage/framework/cache/.gitignore
+storage/framework/sessions/*
+!storage/framework/sessions/.gitignore
+storage/framework/views/*
+!storage/framework/views/.gitignore
+storage/logs/*
+!storage/logs/.gitignore
+bootstrap/cache/*
+!bootstrap/cache/.gitignore
+
+# Tests / tooling
+.phpunit.result.cache
+.phpunit.cache
+tests
+phpunit.xml
+
+# Docs / misc
+docs
+*.postman_collection.json

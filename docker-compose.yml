@@ -1,0 +1,98 @@
+# Order service: PHP-FPM (app) + Nginx (web) + MySQL 8.
+# MySQL host port 3308 (auth-service uses 3307). `docker/compose.env` = Compose (DB_HOST=mysql).
+#
+# Setup:
+#   cp docker/compose.env.example docker/compose.env
+#   # Set APP_KEY, JWT_SECRET, DB passwords, RabbitMQ, PRODUCT_/PAYMENT_ URLs (see example)
+#   docker compose --env-file docker/compose.env up -d --build
+#
+# API: http://localhost:${ORDER_HTTP_PORT:-8001}/api/...  — health: /up
+# Default 8001 matches frontend-react VITE_ORDER_SERVICE_URL (http://localhost:8001/api).
+#
+# Optional RabbitMQ consumers (same image as app; needs reachable RABBITMQ_* in compose.env):
+#   docker compose --env-file docker/compose.env --profile consumers up -d --build
+
+name: order-service
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file:
+      - docker/compose.env # (remove in production) if you use only .env from secrets store
+      # - .env # (uncomment in production)
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - order-internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    restart: unless-stopped
+    ports:
+      - "${ORDER_HTTP_PORT:-8001}:80"
+    depends_on:
+      - app
+    networks:
+      - order-internal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  mysql:
+    image: mysql:8.0.36
+    container_name: order_service_db
+    restart: unless-stopped
+    env_file:
+      - docker/compose.env
+    ports:
+      - "3308:3306" # (remove in production) host tools e.g. 127.0.0.1:3308
+    volumes:
+      - order-mysql-data:/var/lib/mysql
+    networks:
+      - order-internal
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Long-running RabbitMQ consumers; enable with: docker compose --profile consumers up -d
+  consumers:
+    profiles: ["consumers"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file:
+      - docker/compose.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - order-internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["php", "artisan", "consume:all"]
+    # mem_limit: 512m # (uncomment in production)
+
+networks:
+  order-internal:
+    driver: bridge
+
+volumes:
+  order-mysql-data:
