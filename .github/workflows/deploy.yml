@@ -52,16 +52,16 @@ jobs:
       # Copy config files to server
       #################################################
       - name: 📂 Copy Config Files to Server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT }}
-          source:
-            - docker-compose-prod.yml
-            - docker/prod/nginx/default.conf
-          target: /var/www/html/microservices/order-service
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no \
+            -i ~/.ssh/deploy_key \
+            -P ${{ secrets.SERVER_PORT }} \
+            docker-compose-prod.yml \
+            docker/prod/nginx/default.conf \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/html/microservices/order-service/
 
       - name: 🚀 SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
