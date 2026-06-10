@@ -45,24 +45,6 @@ jobs:
     needs: build-and-push
 
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      #################################################
-      # Copy config files to server
-      #################################################
-      - name: 📂 Copy Config Files to Server
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no \
-            -i ~/.ssh/deploy_key \
-            -P ${{ secrets.SERVER_PORT }} \
-            docker-compose-prod.yml \
-            docker/prod/nginx/default.conf \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/html/microservices/order-service/
-
       - name: 🚀 SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -77,9 +59,18 @@ jobs:
 
             echo "🚀 Deploying Order Service..."
 
-            DEPLOY_DIR="/var/www/html/microservices/order-service"
-            mkdir -p "$DEPLOY_DIR"
-            cd "$DEPLOY_DIR"
+            ##################################################
+            # 1. Clone or update repo
+            ##################################################
+            if [ ! -d "/var/www/html/microservices/order-service" ]; then
+              git clone git@github.com:Microservice-ITV/order-service.git \
+              /var/www/html/microservices/order-service
+            fi
+
+            cd /var/www/html/microservices/order-service
+
+            git fetch origin
+            git reset --hard origin/main
 
             ##################################################
             # 📄 Create env files on server
@@ -96,24 +87,23 @@ jobs:
             EOF
             chmod 600 src/.env
 
-
             ##################################################
-            # 1. Docker Login (for pulling private images)
+            # 2. Docker Login (for pulling private images)
             ##################################################
             echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
             ##################################################
-            # 2. Pull latest images
+            # 3. Pull latest images
             ##################################################
             docker compose -f docker-compose-prod.yml --env-file prod.env pull
 
             ##################################################
-            # 3. Restart containers
+            # 4. Restart containers
             ##################################################
             docker compose -f docker-compose-prod.yml --env-file prod.env up -d
 
             ##################################################
-            # 4. Cleanup
+            # 5. Cleanup
             ##################################################
             docker image prune -f
             docker system prune -f
