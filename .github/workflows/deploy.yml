@@ -59,18 +59,20 @@ jobs:
 
             echo "🚀 Deploying Order Service..."
 
-            ##################################################
-            # 1. Clone or update repo
-            ##################################################
-            if [ ! -d "/var/www/html/microservices/order-service" ]; then
-              git clone git@github.com:Microservice-ITV/order-service.git \
-              /var/www/html/microservices/order-service
-            fi
+            DEPLOY_DIR="/var/www/html/microservices/order-service"
+            mkdir -p "$DEPLOY_DIR/docker/prod/nginx"
+            cd "$DEPLOY_DIR"
 
-            cd /var/www/html/microservices/order-service
+            ##################################################
+            # 1. Download config files from GitHub
+            ##################################################
+            echo "📄 Downloading docker-compose-prod.yml..."
+            curl -sL -o docker-compose-prod.yml \
+              https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker-compose-prod.yml
 
-            git fetch origin
-            git reset --hard origin/main
+            echo "📄 Downloading nginx default.conf..."
+            curl -sL -o docker/prod/nginx/default.conf \
+              https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker/prod/nginx/default.conf
 
             ##################################################
             # 📄 Create env files on server
@@ -82,10 +84,10 @@ jobs:
             chmod 600 prod.env
 
             echo "📄 Creating .env (Laravel)..."
-            cat > src/.env <<EOF
+            cat > .env <<EOF
             ${{ secrets.LARAVEL_ENV }}
             EOF
-            chmod 600 src/.env
+            chmod 600 .env
 
             ##################################################
             # 2. Docker Login (for pulling private images)
