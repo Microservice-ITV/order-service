@@ -67,11 +67,13 @@ jobs:
             # 1. Download config files from GitHub
             ##################################################
             echo "📄 Downloading docker-compose-prod.yml..."
-            curl -sL -o docker-compose-prod.yml \
+            curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -o docker-compose-prod.yml \
               https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker-compose-prod.yml
 
             echo "📄 Downloading nginx default.conf..."
-            curl -sL -o docker/prod/nginx/default.conf \
+            curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -o docker/prod/nginx/default.conf \
               https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker/prod/nginx/default.conf
 
             ##################################################
