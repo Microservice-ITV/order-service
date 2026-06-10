@@ -10,7 +10,6 @@ services:
     image: yelinnoo/orderservice-app:latest
     container_name: orderservice-${PHP_CONTAINER_NAME}
     restart: always
-    env_file: prod.env
     volumes:
       - ./.env:/var/www/html/.env
     environment:
