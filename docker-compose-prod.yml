@@ -11,6 +11,8 @@ services:
     container_name: orderservice-${PHP_CONTAINER_NAME}
     restart: always
     env_file: prod.env
+    volumes:
+      - ./.env:/var/www/html/.env
     environment:
       APP_ENV: ${APP_ENV}
       APP_KEY: ${APP_KEY}
