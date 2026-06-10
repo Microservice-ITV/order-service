@@ -1,4 +1,4 @@
-name: 🚀 Auth Service Production Deploy
+name: 🚀 Order Service Production Deploy
 
 on:
   push:
@@ -33,34 +33,8 @@ jobs:
           file: docker/prod/php/Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/authservice-app:latest
-            ${{ secrets.DOCKER_USERNAME }}/authservice-app:${{ github.sha }}
-
-      #################################################
-      # Build & Push Nginx Image
-      #################################################
-      - name: 🏗️ Build & Push Nginx Image
-        uses: docker/build-push-action@v6
-        with:
-          context: docker/prod/nginx
-          file: docker/prod/nginx/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/authservice-nginx:latest
-            ${{ secrets.DOCKER_USERNAME }}/authservice-nginx:${{ github.sha }}
-
-      #################################################
-      # Build & Push MySQL Image
-      #################################################
-      - name: 🏗️ Build & Push MySQL Image
-        uses: docker/build-push-action@v6
-        with:
-          context: docker/prod/mysql
-          file: docker/prod/mysql/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/authservice-mysql:latest
-            ${{ secrets.DOCKER_USERNAME }}/authservice-mysql:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/orderservice-app:latest
+            ${{ secrets.DOCKER_USERNAME }}/orderservice-app:${{ github.sha }}
 
   #####################################################
   # DEPLOY TO VPS
@@ -71,6 +45,25 @@ jobs:
     needs: build-and-push
 
     steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      #################################################
+      # Copy config files to server
+      #################################################
+      - name: 📂 Copy Config Files to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: |
+            docker-compose-prod.yml
+            docker/prod/nginx/default.conf
+          target: /var/www/html/microservices/order-service
+          strip_components: 0
+
       - name: 🚀 SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -83,20 +76,11 @@ jobs:
 
             set -e
 
-            echo "🚀 Deploying Auth Service..."
+            echo "🚀 Deploying Order Service..."
 
-            ##################################################
-            # 1. Clone or update repo
-            ##################################################
-            if [ ! -d "/var/www/html/microservices/auth-service" ]; then
-              git clone git@github.com:Microservice-ITV/auth-service.git \
-              /var/www/html/microservices/auth-service
-            fi
-
-            cd /var/www/html/microservices/auth-service
-
-            git fetch origin
-            git reset --hard origin/main
+            DEPLOY_DIR="/var/www/html/microservices/order-service"
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
 
             ##################################################
             # 📄 Create env files on server
@@ -113,25 +97,26 @@ jobs:
             EOF
             chmod 600 src/.env
 
+
             ##################################################
-            # 2. Docker Login (for pulling private images)
+            # 1. Docker Login (for pulling private images)
             ##################################################
             echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
             ##################################################
-            # 3. Pull latest images
+            # 2. Pull latest images
             ##################################################
             docker compose -f docker-compose-prod.yml --env-file prod.env pull
 
             ##################################################
-            # 4. Restart containers
+            # 3. Restart containers
             ##################################################
             docker compose -f docker-compose-prod.yml --env-file prod.env up -d
 
             ##################################################
-            # 5. Cleanup
+            # 4. Cleanup
             ##################################################
             docker image prune -f
             docker system prune -f
 
-            echo "✅ Auth Service Deployment Successful!"
+            echo "✅ Order Service Deployment Successful!"

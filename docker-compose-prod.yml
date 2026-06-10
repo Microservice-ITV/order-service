@@ -1,4 +1,4 @@
-name: authservice
+name: orderservice
 
 networks:
   app-network:
@@ -7,8 +7,8 @@ networks:
 
 services:
   app:
-    image: yelinnoo/authservice-app:latest
-    container_name: authservice-${PHP_CONTAINER_NAME}
+    image: yelinnoo/orderservice-app:latest
+    container_name: orderservice-${PHP_CONTAINER_NAME}
     restart: always
     env_file: prod.env
     environment:
@@ -32,8 +32,8 @@ services:
       - app-network
 
   mysql:
-    image: yelinnoo/authservice-mysql:latest
-    container_name: authservice-${DB_CONTAINER_NAME}
+    image: mysql:8.4
+    container_name: orderservice-${DB_CONTAINER_NAME}
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
@@ -52,13 +52,15 @@ services:
       - app-network
 
   nginx:
-    image: yelinnoo/authservice-nginx:latest
-    container_name: authservice-${NGINX_CONTAINER_NAME}
+    image: nginx:1.27-alpine
+    container_name: orderservice-${NGINX_CONTAINER_NAME}
     restart: always
     ports:
       - "80"
     depends_on:
       - app
+    volumes:
+      - ./docker/prod/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - app-network
 
