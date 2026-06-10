@@ -58,11 +58,10 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
-          source: |
-            docker-compose-prod.yml
-            docker/prod/nginx/default.conf
+          source:
+            - docker-compose-prod.yml
+            - docker/prod/nginx/default.conf
           target: /var/www/html/microservices/order-service
-          strip_components: 0
 
       - name: 🚀 SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
