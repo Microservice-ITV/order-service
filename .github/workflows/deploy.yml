@@ -60,6 +60,7 @@ jobs:
             echo "🚀 Deploying Order Service..."
 
             DEPLOY_DIR="/var/www/html/microservices/order-service"
+            rm -rf "$DEPLOY_DIR"
             mkdir -p "$DEPLOY_DIR/docker/prod/nginx"
             cd "$DEPLOY_DIR"
 
