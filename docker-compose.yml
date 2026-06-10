@@ -1,4 +1,4 @@
-name: authservice
+name: orderservice
 
 networks:
   app-network:
@@ -10,7 +10,7 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    container_name: authservice-${PHP_CONTAINER_NAME}
+    container_name: orderservice-${PHP_CONTAINER_NAME}
     working_dir: ${PHP_WORKING_DIR}
     restart: always
     environment:
@@ -26,6 +26,8 @@ services:
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached
       - ./src/database:${PHP_WORKING_DIR}/database
       - ./src/config:${PHP_WORKING_DIR}/config
+      - ./.env.example:${PHP_WORKING_DIR}/.env.example
+      - ./.env:${PHP_WORKING_DIR}/.env
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f php-fpm || exit 1"]
       interval: 30s
@@ -40,7 +42,7 @@ services:
 
   mysql:
     image: mysql:8.0
-    container_name: authservice-${DB_CONTAINER_NAME}
+    container_name: orderservice-${DB_CONTAINER_NAME}
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
@@ -48,7 +50,7 @@ services:
       MYSQL_USER: ${DB_USERNAME}
       MYSQL_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "${DB_EXTERNAL_PORT}:3306"
+      - "${DB_PORT}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -62,11 +64,11 @@ services:
 
   nginx:
     image: nginx:stable-alpine
-    container_name: authservice-${NGINX_CONTAINER_NAME}
+    container_name: orderservice-${NGINX_CONTAINER_NAME}
     ports:
       # Host port is environment-driven to avoid local conflicts
       # with nginx/apache/valet/xampp/other Docker stacks.
-      - "${APP_PORT:-8080}:80"
+      - "${APP_PORT}:80"
     volumes:
       - ./docker/nginx:/etc/nginx/conf.d
       - ./src:${NGINX_WORKING_DIR}
