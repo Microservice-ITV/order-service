@@ -7,7 +7,7 @@ networks:
 
 services:
   app:
-    image: yelinnoo/orderservice-app:latest
+    image: itvmicroservicesteam/orderservice-app:latest
     container_name: orderservice-${PHP_CONTAINER_NAME}
     restart: always
     volumes:
