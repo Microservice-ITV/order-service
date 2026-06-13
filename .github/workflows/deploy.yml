@@ -90,7 +90,7 @@ jobs:
             cat > .env <<EOF
             ${{ secrets.LARAVEL_ENV }}
             EOF
-            chmod 600 .env
+            chmod 644 .env
 
             ##################################################
             # 2. Docker Login (for pulling private images)
