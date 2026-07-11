@@ -5,7 +5,7 @@
  *
  * - Middleware for sanitizing incoming request data.
  * - Applies:
- *   - Key sanitization using `FILTER_SANITIZE_STRING`.
+ *   - Key sanitization using `FILTER_SANITIZE_FULL_SPECIAL_CHARS`.
  *   - Value sanitization using `strip_tags` for string values.
  * - Ensures protection against XSS, malicious inputs, and invalid request data.
  * - Applied early in request lifecycle before hitting controllers.
@@ -24,7 +24,7 @@ class SanitizeInput
         $data = $request->all();
 
         foreach ($data as $key => $value) {
-            $cleanKey = filter_var($key, FILTER_SANITIZE_STRING);
+            $cleanKey = filter_var($key, FILTER_SANITIZE_FULL_SPECIAL_CHARS);
             $cleanValue = is_string($value) ? strip_tags($value) : $value;
             $data[$cleanKey] = $cleanValue;
         }
