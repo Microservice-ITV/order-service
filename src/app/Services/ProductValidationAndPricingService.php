@@ -34,15 +34,28 @@ final class ProductValidationAndPricingService
             return $row;
         }, $items);
 
-        $response = Http::timeout(3)
-            ->retry(2, 100)
-            ->withHeaders([
-                'Content-Type'  => 'application/json',
-                'X-SERVICE-KEY' => $productApiKey,
-            ])
-            ->post(rtrim($productServiceUrl, '/') . '/api/v1/products/validate-stock', [
-                'items' => $payloadItems,
+        try {
+            $response = Http::timeout(5)
+                ->retry(3, 300)
+                ->withHeaders([
+                    'Content-Type'  => 'application/json',
+                    'X-SERVICE-KEY' => $productApiKey,
+                ])
+                ->post(rtrim($productServiceUrl, '/') . '/api/v1/products/validate-stock', [
+                    'items' => $payloadItems,
+                ]);
+        } catch (\Throwable $e) {
+            logger('PRODUCT SERVICE STOCK VALIDATION CONNECTION FAILED', [
+                'message' => $e->getMessage(),
             ]);
+
+            return [
+                'ok' => false,
+                'stockValid' => false,
+                'items' => [],
+                'priceByProduct' => [],
+            ];
+        }
 
         if (!$response->ok() || !($response->json('success') ?? false)) {
             logger('PRODUCT SERVICE STOCK VALIDATION API FAILED', [
