@@ -32,7 +32,7 @@ class ConsumeProductRejected extends BaseConsumer
         ];
     }
     
-    protected function process(array $payload): void
+    public function process(array $payload): void
     {
         logger()->info(LogMessage::PRODUCT_REJECTED_RECEIVED, [
             'payload' => $payload,

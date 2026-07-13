@@ -7,7 +7,6 @@ use App\Models\CheckoutItem;
 use App\Services\CheckoutService;
 use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
-use Illuminate\Support\Facades\DB;
 use App\Logging\LogMessage;
 
 class ConsumeProductValidated extends BaseConsumer
@@ -32,7 +31,7 @@ class ConsumeProductValidated extends BaseConsumer
         ];
     }
 
-    protected function process(array $payload): void
+    public function process(array $payload): void
     {
         logger()->info(LogMessage::PRODUCT_VALIDATED_RECEIVED, [
             'payload' => $payload,
@@ -48,60 +47,57 @@ class ConsumeProductValidated extends BaseConsumer
             return;
         }
 
-        DB::transaction(function () use ($data, $checkoutId) {
-            $checkoutService = app(CheckoutService::class);
-            $paymentService  = app(PaymentService::class);
-            
-            // Validate checkout exists and is not expired
-            $checkout = $checkoutService->validateCheckout($checkoutId);
-            if (!$checkout) {
-                logger()->warning(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => 'CHECKOUT_NOT_FOUND_OR_EXPIRED',
-                ]);
-                return;
-            }
+        $checkoutService = app(CheckoutService::class);
+        $paymentService  = app(PaymentService::class);
 
-            $total = (float) ($data['total'] ?? $this->calculateOrderTotal($checkoutId));
-            $reservationId = (string) ($data['reservation_id'] ?? '');
-            $correlationId = (string) ($data['correlation_id'] ?? '');
-            if ($correlationId === '') {
-                $correlationId = (string) ($checkout->correlation_id ?? '');
-            }
-            if ($correlationId === '') {
-                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => 'MISSING_CORRELATION_ID',
-                ]);
-                throw new \RuntimeException('Missing correlation_id');
-            }
-
-            if ($reservationId === '') {
-                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => 'INVALID_RESERVATION_ID',
-                ]);
-
-                throw new \RuntimeException('Invalid reservation_id');
-            }
-
-            $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
-
-            logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
-                'checkout_id'    => $checkoutId,
-                'reservation_id' => $reservationId,
+        $checkout = $checkoutService->validateCheckout($checkoutId);
+        if (!$checkout) {
+            logger()->warning(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                'checkout_id' => $checkoutId,
+                'reason'      => 'CHECKOUT_NOT_FOUND_OR_EXPIRED',
             ]);
+            return;
+        }
 
-            // Create payment intent via REST API
-            $expireAtIso = $checkout->getExpireAtIso();
-            if ($expireAtIso === null) {
-                logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
-                    'checkout_id' => $checkoutId,
-                    'reason'      => 'MISSING_EXPIRE_AT',
-                ]);
-                throw new \RuntimeException('Missing expire_at');
-            }
+        $total = (float) ($data['total'] ?? $this->calculateOrderTotal($checkoutId));
+        $reservationId = (string) ($data['reservation_id'] ?? '');
+        $correlationId = (string) ($data['correlation_id'] ?? '');
+        if ($correlationId === '') {
+            $correlationId = (string) ($checkout->correlation_id ?? '');
+        }
+        if ($correlationId === '') {
+            logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                'checkout_id' => $checkoutId,
+                'reason'      => 'MISSING_CORRELATION_ID',
+            ]);
+            throw new \RuntimeException('Missing correlation_id');
+        }
 
+        if ($reservationId === '') {
+            logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                'checkout_id' => $checkoutId,
+                'reason'      => 'INVALID_RESERVATION_ID',
+            ]);
+            throw new \RuntimeException('Invalid reservation_id');
+        }
+
+        $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
+
+        logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
+            'checkout_id'    => $checkoutId,
+            'reservation_id' => $reservationId,
+        ]);
+
+        $expireAtIso = $checkout->getExpireAtIso();
+        if ($expireAtIso === null) {
+            logger()->error(LogMessage::CHECKOUT_REJECTED_STOCK_FAILED, [
+                'checkout_id' => $checkoutId,
+                'reason'      => 'MISSING_EXPIRE_AT',
+            ]);
+            throw new \RuntimeException('Missing expire_at');
+        }
+
+        try {
             $paymentIntent = $paymentService->createPaymentIntent(
                 checkoutId: $checkoutId,
                 reservationId: $reservationId,
@@ -109,23 +105,28 @@ class ConsumeProductValidated extends BaseConsumer
                 correlationId: $correlationId,
                 expireAtIso: $expireAtIso
             );
-
-            $paymentId    = (string) $paymentIntent['payment_id'];
-            $clientSecret = (string) $paymentIntent['client_secret'];
-
-            logger()->info("PAYMENT_INTENT_API_RESPONSE", [
-                'payment_id' => $paymentId,
-                'client_secret' => $clientSecret,
-            ]);
-
-            $checkoutService->updatePaymentIntent($checkoutId, $paymentId, $clientSecret);
-            $checkoutService->markPendingPayment($checkoutId);
-
-
-            logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
+        } catch (\Throwable $e) {
+            logger()->error('PAYMENT_INTENT_CREATION_FAILED_STOCK_STILL_CONFIRMED', [
                 'checkout_id' => $checkoutId,
+                'error'       => $e->getMessage(),
             ]);
-        });
+            return;
+        }
+
+        $paymentId    = (string) $paymentIntent['payment_id'];
+        $clientSecret = (string) $paymentIntent['client_secret'];
+
+        logger()->info("PAYMENT_INTENT_API_RESPONSE", [
+            'payment_id' => $paymentId,
+            'client_secret' => $clientSecret,
+        ]);
+
+        $checkoutService->updatePaymentIntent($checkoutId, $paymentId, $clientSecret);
+        $checkoutService->markPendingPayment($checkoutId);
+
+        logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
+            'checkout_id' => $checkoutId,
+        ]);
     }
 
     private function calculateOrderTotal(string $checkoutId): float
