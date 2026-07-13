@@ -842,11 +842,18 @@ class CheckoutService
             'expires_at' => $checkout->getExpireAtIso(),
         ]);
 
-        Publisher::publishStatic(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
+        try {
+            Publisher::publishStatic(EventTopic::ORDER_CHECKOUT_REQUESTED, $payload);
 
-        logger()->info('ORDER_CREATED EVENT PUBLISHED', [
-            'checkout_id' => $checkout->id,
-            'payload' => $payload,
-        ]);
+            logger()->info('ORDER_CREATED EVENT PUBLISHED', [
+                'checkout_id' => $checkout->id,
+                'payload' => $payload,
+            ]);
+        } catch (\Throwable $e) {
+            logger()->warning('ORDER_CREATED_EVENT_PUBLISH_FAILED_WILL_RETRY_VIA_OUTBOX', [
+                'checkout_id' => $checkout->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

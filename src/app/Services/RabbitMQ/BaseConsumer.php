@@ -10,7 +10,7 @@ abstract class BaseConsumer extends Command
 {
     abstract protected function routingKeys(): array;
     abstract protected function queue(): string;
-    abstract protected function process(array $payload): void;
+    abstract public function process(array $payload): void;
 
     public function handle(): void
     {
@@ -20,82 +20,116 @@ abstract class BaseConsumer extends Command
     public function listen(): void
     {
         $conn = RabbitMQConnection::make();
-        $channel = $conn->channel();
+        try {
+            $channel = $conn->channel();
 
-        $channel->exchange_declare(
-            config('rabbitmq.exchange'),
-            'topic',
-            false,
-            true,
-            false
-        );
-
-        $channel->queue_declare(
-            $this->queue(),
-            false,
-            true,
-            false,
-            false
-        );
-
-        foreach ($this->routingKeys() as $key) {
-            $channel->queue_bind(
-                $this->queue(),
+            $channel->exchange_declare(
                 config('rabbitmq.exchange'),
-                $key
+                'topic',
+                false,
+                true,
+                false
             );
-        }
 
-        $channel->basic_consume(
-            $this->queue(),
-            '',
-            false,
-            true,
-            false,
-            false,
-            function ($msg) {
-                $payload = json_decode($msg->body, true);
-                if (!is_array($payload)) {
-                    return;
-                }
+            $channel->queue_declare(
+                $this->queue(),
+                false,
+                true,
+                false,
+                false
+            );
 
-                $eventId = (string) ($payload['event_id'] ?? '');
-                if ($eventId === '') {
-                    // Backward compatibility for old messages without event_id.
-                    $this->process($payload);
-                    return;
-                }
-
-                $eventType = (string) ($payload['event'] ?? '');
-                $this->trackInboxReceived($eventId, $eventType, $payload);
-
-                if ($this->isAlreadyProcessed($eventId)) {
-                    $this->trackInboxSkippedDuplicate($eventId);
-                    logger()->info('EVENT_SKIPPED_ALREADY_PROCESSED', [
-                        'event_id' => $eventId,
-                        'consumer' => static::class,
-                    ]);
-                    return;
-                }
-
-                $this->markProcessing($eventId, $eventType);
-                $this->trackInboxProcessing($eventId);
-                try {
-                    $this->process($payload);
-                    $this->markProcessed($eventId);
-                    $this->trackInboxProcessed($eventId);
-                } catch (Throwable $e) {
-                    $this->markFailed($eventId, $e->getMessage());
-                    $this->trackInboxFailed($eventId, $e->getMessage());
-                    throw $e;
-                }
+            foreach ($this->routingKeys() as $key) {
+                $channel->queue_bind(
+                    $this->queue(),
+                    config('rabbitmq.exchange'),
+                    $key
+                );
             }
-        );
 
-        echo "Listening on queue: {$this->queue()}\n";
+            $channel->basic_consume(
+                $this->queue(),
+                '',
+                false,
+                false,
+                false,
+                false,
+                function ($msg) use ($channel) {
+                    $payload = json_decode($msg->body, true);
+                    if (!is_array($payload)) {
+                        $channel->basic_ack($msg->delivery_tag);
+                        return;
+                    }
 
-        while (true) {
-            $channel->wait();
+                    $eventId = (string) ($payload['event_id'] ?? '');
+                    if ($eventId === '') {
+                        try {
+                            $this->process($payload);
+                            $channel->basic_ack($msg->delivery_tag);
+                        } catch (Throwable $e) {
+                            logger()->error('CONSUMER_PROCESS_FAILED_NO_EVENT_ID', [
+                                'consumer' => static::class,
+                                'error' => $e->getMessage(),
+                            ]);
+                            $channel->basic_nack($msg->delivery_tag, false, true);
+                        }
+                        return;
+                    }
+
+                    $eventType = (string) ($payload['event'] ?? '');
+                    $this->trackInboxReceived($eventId, $eventType, $payload);
+
+                    if ($this->isAlreadyProcessed($eventId)) {
+                        $this->trackInboxSkippedDuplicate($eventId);
+                        logger()->info('EVENT_SKIPPED_ALREADY_PROCESSED', [
+                            'event_id' => $eventId,
+                            'consumer' => static::class,
+                        ]);
+                        $channel->basic_ack($msg->delivery_tag);
+                        return;
+                    }
+
+                    $this->markProcessing($eventId, $eventType);
+                    $this->trackInboxProcessing($eventId);
+                    try {
+                        $this->process($payload);
+                        $this->markProcessed($eventId);
+                        $this->trackInboxProcessed($eventId);
+                        $channel->basic_ack($msg->delivery_tag);
+                    } catch (Throwable $e) {
+                        $this->markFailed($eventId, $e->getMessage());
+                        $this->trackInboxFailed($eventId, $e->getMessage());
+                        $channel->basic_nack($msg->delivery_tag, false, true);
+                    }
+                }
+            );
+
+            echo "Listening on queue: {$this->queue()}\n";
+
+            while (true) {
+                $channel->wait();
+            }
+        } catch (Throwable $e) {
+            logger()->error('CONSUMER_FATAL_ERROR', [
+                'consumer' => static::class,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        } finally {
+            try {
+                if (isset($channel) && $channel->is_open()) {
+                    $channel->close();
+                }
+            } catch (Throwable $e) {
+                // ignore close errors
+            }
+            try {
+                if (isset($conn) && $conn->is_connected()) {
+                    $conn->close();
+                }
+            } catch (Throwable $e) {
+                // ignore close errors
+            }
         }
     }
 

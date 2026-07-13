@@ -34,7 +34,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
         return [EventTopic::PAYMENT_COMPLETED->value];
     }
 
-    protected function process(array $payload): void
+    public function process(array $payload): void
     {
         $data = $payload['data'] ?? [];
 

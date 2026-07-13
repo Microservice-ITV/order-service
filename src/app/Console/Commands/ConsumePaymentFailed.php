@@ -29,7 +29,7 @@ class ConsumePaymentFailed extends BaseConsumer
         return [EventTopic::PAYMENT_FAILED->value];
     }
 
-    protected function process(array $payload): void
+    public function process(array $payload): void
     {
         logger()->info(LogMessage::PAYMENT_FAILED_RECEIVED, [
             'payload' => $payload,

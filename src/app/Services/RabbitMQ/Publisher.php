@@ -112,7 +112,6 @@ class Publisher implements EventPublisherInterface
             );
 
             $channel->close();
-            $conn->close();
 
             DB::table('outbox_events')->where('id', $outboxId)->update([
                 'status' => 'SENT',

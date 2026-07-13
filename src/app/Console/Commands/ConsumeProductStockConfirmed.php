@@ -34,7 +34,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
         ];
     }
 
-    protected function process(array $payload): void
+    public function process(array $payload): void
     {
         logger()->info('PRODUCT_STOCK_CONFIRMED_RECEIVED', [
             'payload' => $payload,
