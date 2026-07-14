@@ -104,11 +104,16 @@ class CheckoutController extends Controller
                 default => 'Delivery address cannot be updated in current state',
             };
 
-            return response()->json([
+            $payload = [
                 'checkout_id' => $checkoutId,
                 'error' => $message,
                 'status' => $result['status'],
-            ], 409);
+            ];
+            if (!empty($result['shop_validation']) && is_array($result['shop_validation'])) {
+                $payload['shop_validation'] = $result['shop_validation'];
+            }
+
+            return response()->json($payload, 409);
         }
 
         $payload = [

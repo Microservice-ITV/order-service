@@ -23,6 +23,8 @@ class CheckoutSessionController extends Controller
             ], 404);
         }
 
+        $checkout->loadMissing('items');
+
         return response()->json([
             'checkout_id' => $checkout->id,
             'status'      => $checkout->status_id->name,
@@ -30,6 +32,12 @@ class CheckoutSessionController extends Controller
                 'payment_id'    => $checkout->payment_id,
                 'client_secret' => $checkout->client_secret,
             ] : null,
+            'items' => $checkout->items->map(static fn ($item): array => [
+                'product_id' => $item->product_id,
+                'variant_id' => $item->variant_id,
+                'shop_id'    => $item->shop_id !== null ? (string) $item->shop_id : null,
+                'qty'        => (int) $item->qty,
+            ])->values()->all(),
         ]);
     }
 

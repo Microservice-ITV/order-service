@@ -110,6 +110,12 @@ class ConsumeProductValidated extends BaseConsumer
                 'checkout_id' => $checkoutId,
                 'error'       => $e->getMessage(),
             ]);
+
+            $checkoutService->markPaymentPreparationFailed(
+                $checkoutId,
+                'PAYMENT_INTENT_CREATION_FAILED'
+            );
+
             return;
         }
 

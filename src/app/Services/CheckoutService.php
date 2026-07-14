@@ -154,6 +154,21 @@ class CheckoutService
         );
     }
 
+    public function markPaymentPreparationFailed(string $checkoutId, ?string $reason = null): bool
+    {
+        return $this->transitionStatus(
+            $checkoutId,
+            OrderStatus::STOCK_CONFIRMED,
+            [
+                'status_id'      => OrderStatus::FAILED_PAYMENT->value,
+                'failure_reason' => $reason,
+                'updated_at'     => now(),
+            ],
+            LogMessage::CHECKOUT_PAYMENT_FAILED,
+            ['reason' => $reason]
+        );
+    }
+
     public function confirm(string $checkoutId): bool
     {
         return $this->transitionStatus(
@@ -365,7 +380,8 @@ class CheckoutService
                 return [
                     'not_found' => false,
                     'invalid_state' => true,
-                    'reason' => $shopError,
+                    'reason' => $shopError['reason'],
+                    'shop_validation' => $shopError,
                     'status' => $checkout->status_id->name,
                     'address_updated_at' => null,
                 ];
@@ -575,32 +591,59 @@ class CheckoutService
 
     /**
      * @param  list<array{shop_id: string, shipping_fee: float}>  $normalizedRows
+     * @return array{
+     *   reason: string,
+     *   checkout_shop_ids: list<string>,
+     *   provided_shop_ids: list<string>,
+     *   missing_shop_ids?: list<string>,
+     *   unknown_shop_ids?: list<string>
+     * }|null
      */
-    private function validateShopShippingsAgainstItems(string $checkoutId, array $normalizedRows): ?string
+    private function validateShopShippingsAgainstItems(string $checkoutId, array $normalizedRows): ?array
     {
         $cartShops = CheckoutItem::query()
             ->where('checkout_id', $checkoutId)
             ->get()
             ->pluck('shop_id')
             ->filter(static fn ($s) => $s !== null && $s !== '')
+            ->map(static fn ($s) => (string) $s)
             ->unique()
             ->values()
             ->all();
 
         if ($cartShops === []) {
-            return 'checkout_items_missing_shop_id';
+            return [
+                'reason' => 'checkout_items_missing_shop_id',
+                'checkout_shop_ids' => [],
+                'provided_shop_ids' => array_column($normalizedRows, 'shop_id'),
+            ];
         }
 
         $feeShops = array_column($normalizedRows, 'shop_id');
-        foreach ($cartShops as $sid) {
-            if (!in_array($sid, $feeShops, true)) {
-                return 'shipping_missing_for_shop';
-            }
+        $missingShopIds = array_values(array_filter(
+            $cartShops,
+            static fn (string $sid): bool => !in_array($sid, $feeShops, true)
+        ));
+        if ($missingShopIds !== []) {
+            return [
+                'reason' => 'shipping_missing_for_shop',
+                'checkout_shop_ids' => $cartShops,
+                'provided_shop_ids' => $feeShops,
+                'missing_shop_ids' => $missingShopIds,
+            ];
         }
-        foreach ($feeShops as $sid) {
-            if (!in_array($sid, $cartShops, true)) {
-                return 'unknown_shop_in_shipping';
-            }
+
+        $unknownShopIds = array_values(array_filter(
+            $feeShops,
+            static fn (string $sid): bool => !in_array($sid, $cartShops, true)
+        ));
+        if ($unknownShopIds !== []) {
+            return [
+                'reason' => 'unknown_shop_in_shipping',
+                'checkout_shop_ids' => $cartShops,
+                'provided_shop_ids' => $feeShops,
+                'unknown_shop_ids' => $unknownShopIds,
+            ];
         }
 
         return null;
