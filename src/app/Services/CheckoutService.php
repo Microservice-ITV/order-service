@@ -25,7 +25,8 @@ class CheckoutService
         private readonly CheckoutSessionInterface $checkoutSessions,
         private readonly CheckoutItemInterface $checkoutItems,
         private readonly ProductValidationAndPricingService $pricingService,
-        private readonly PaymentService $paymentService
+        private readonly PaymentService $paymentService,
+        private readonly ProductStockReservationService $stockReservationService
     ) {}
 
     /**
@@ -719,6 +720,11 @@ class CheckoutService
 
         $existing = $this->findByIdempotencyHash($idempotencyHash);
         if ($existing) {
+            if ($existing->status_id === OrderStatus::PENDING_STOCK) {
+                $this->retryPendingStockCheckout($existing, $items, $idempotencyHash);
+                $existing = $this->findById($existing->id) ?? $existing;
+            }
+
             return ['checkout' => $existing, 'existing' => true];
         }
 
@@ -753,7 +759,41 @@ class CheckoutService
             throw $e;
         }
 
+        $total = $this->calculateValidatedItemsTotal($validationData['items']);
+        $expireAtIso = $checkout->getExpireAtIso();
+        if ($expireAtIso === null) {
+            throw new BusinessException('Checkout expiration is not configured', 500);
+        }
+
+        $reservation = $this->stockReservationService->reserve(
+            checkoutId: $checkout->id,
+            items: $items,
+            expiresAtIso: $expireAtIso,
+            correlationId: $idempotencyHash
+        );
+
+        if ($reservation['ok'] !== true) {
+            $reason = (string) ($reservation['reason'] ?? 'OUT_OF_STOCK');
+            $this->reject($checkout->id, $reason);
+            throw new BusinessException(
+                $reason === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'Unable to reserve product stock',
+                400,
+                $reason === 'OUT_OF_STOCK' ? ['items' => []] : []
+            );
+        }
+
+        $paymentPreparationService = app(CheckoutPaymentPreparationService::class);
+
+        $paymentPreparationService->confirmStockAndPreparePayment(
+            checkoutId: $checkout->id,
+            reservationId: (string) $reservation['reservation_id'],
+            total: $total,
+            correlationId: $idempotencyHash
+        );
+
         $this->publishOrderCheckoutEvent($checkout, $idempotencyHash);
+
+        $checkout = $this->findById($checkout->id) ?? $checkout;
 
         return ['checkout' => $checkout, 'existing' => false];
     }
@@ -835,6 +875,67 @@ class CheckoutService
 
             return $checkoutSession;
         });
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $validatedItems
+     */
+    private function calculateValidatedItemsTotal(array $validatedItems): float
+    {
+        return (float) array_reduce(
+            $validatedItems,
+            static function (float $carry, array $row): float {
+                if (isset($row['line_total']) && is_numeric($row['line_total'])) {
+                    return $carry + (float) $row['line_total'];
+                }
+
+                $unitPrice = $row['unit_price'] ?? null;
+                $qty = $row['qty'] ?? 0;
+
+                if (!is_numeric($unitPrice)) {
+                    return $carry;
+                }
+
+                return $carry + ((float) $unitPrice * (int) $qty);
+            },
+            0.0
+        );
+    }
+
+    /**
+     * @param  list<array{product_id: string, qty: int, variant_id?: string}>  $items
+     */
+    private function retryPendingStockCheckout(
+        CheckoutSession $checkout,
+        array $items,
+        string $correlationId
+    ): void {
+        $expireAtIso = $checkout->getExpireAtIso();
+        if ($expireAtIso === null) {
+            return;
+        }
+
+        $paymentPreparationService = app(CheckoutPaymentPreparationService::class);
+        $total = $paymentPreparationService->calculateCheckoutItemsTotal($checkout->id);
+
+        $reservation = $this->stockReservationService->reserve(
+            checkoutId: $checkout->id,
+            items: $items,
+            expiresAtIso: $expireAtIso,
+            correlationId: $correlationId
+        );
+
+        if ($reservation['ok'] !== true) {
+            $this->reject($checkout->id, (string) ($reservation['reason'] ?? 'OUT_OF_STOCK'));
+            return;
+        }
+
+        $paymentPreparationService->confirmStockAndPreparePayment(
+            checkoutId: $checkout->id,
+            reservationId: (string) $reservation['reservation_id'],
+            total: $total,
+            correlationId: $correlationId
+        );
     }
 
     private function publishOrderCheckoutEvent(CheckoutSession $checkout, string $correlationId): void

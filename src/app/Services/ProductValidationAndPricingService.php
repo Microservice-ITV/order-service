@@ -35,8 +35,8 @@ final class ProductValidationAndPricingService
         }, $items);
 
         try {
-            $response = Http::timeout(5)
-                ->retry(3, 300)
+            $response = Http::timeout(3)
+                ->retry(2, 200)
                 ->withHeaders([
                     'Content-Type'  => 'application/json',
                     'X-SERVICE-KEY' => $productApiKey,
