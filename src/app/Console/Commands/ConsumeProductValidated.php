@@ -81,7 +81,19 @@ class ConsumeProductValidated extends BaseConsumer
             throw new \RuntimeException('Invalid reservation_id');
         }
 
-        $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
+        $stockConfirmed = $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
+
+        if (!$stockConfirmed && $checkout->status_id === \App\Enums\OrderStatus::PENDING_STOCK) {
+            // Transition failed while session is still PENDING_STOCK: without
+            // requeueing, the event would be acked and the checkout stuck in
+            // PENDING_STOCK ("Confirming stock availability...") indefinitely.
+            logger()->error('CHECKOUT_STOCK_CONFIRM_TRANSITION_FAILED_REQUEUE', [
+                'checkout_id'    => $checkoutId,
+                'reservation_id' => $reservationId,
+                'status_id'      => $checkout->status_id->name,
+            ]);
+            throw new \RuntimeException("Failed to transition checkout {$checkoutId} out of PENDING_STOCK");
+        }
 
         logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
             'checkout_id'    => $checkoutId,

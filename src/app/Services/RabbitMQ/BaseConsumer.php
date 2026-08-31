@@ -57,7 +57,7 @@ abstract class BaseConsumer extends Command
                 function ($msg) use ($channel) {
                     $payload = json_decode($msg->body, true);
                     if (!is_array($payload)) {
-                        $channel->basic_ack($msg->delivery_tag);
+                        $channel->basic_ack($msg->getDeliveryTag());
                         return;
                     }
 
@@ -65,13 +65,13 @@ abstract class BaseConsumer extends Command
                     if ($eventId === '') {
                         try {
                             $this->process($payload);
-                            $channel->basic_ack($msg->delivery_tag);
+                            $channel->basic_ack($msg->getDeliveryTag());
                         } catch (Throwable $e) {
                             logger()->error('CONSUMER_PROCESS_FAILED_NO_EVENT_ID', [
                                 'consumer' => static::class,
                                 'error' => $e->getMessage(),
                             ]);
-                            $channel->basic_nack($msg->delivery_tag, false, true);
+                            $channel->basic_nack($msg->getDeliveryTag(), false, true);
                         }
                         return;
                     }
@@ -85,7 +85,7 @@ abstract class BaseConsumer extends Command
                             'event_id' => $eventId,
                             'consumer' => static::class,
                         ]);
-                        $channel->basic_ack($msg->delivery_tag);
+                        $channel->basic_ack($msg->getDeliveryTag());
                         return;
                     }
 
@@ -95,11 +95,11 @@ abstract class BaseConsumer extends Command
                         $this->process($payload);
                         $this->markProcessed($eventId);
                         $this->trackInboxProcessed($eventId);
-                        $channel->basic_ack($msg->delivery_tag);
+                        $channel->basic_ack($msg->getDeliveryTag());
                     } catch (Throwable $e) {
                         $this->markFailed($eventId, $e->getMessage());
                         $this->trackInboxFailed($eventId, $e->getMessage());
-                        $channel->basic_nack($msg->delivery_tag, false, true);
+                        $channel->basic_nack($msg->getDeliveryTag(), false, true);
                     }
                 }
             );
@@ -124,7 +124,7 @@ abstract class BaseConsumer extends Command
                 // ignore close errors
             }
             try {
-                if (isset($conn) && $conn->is_connected()) {
+                if (isset($conn) && $conn->isConnected()) {
                     $conn->close();
                 }
             } catch (Throwable $e) {

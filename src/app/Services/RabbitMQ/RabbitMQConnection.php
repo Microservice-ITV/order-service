@@ -12,7 +12,7 @@ class RabbitMQConnection
 
     public static function make(): AMQPStreamConnection
     {
-        if (self::$shared !== null && self::$shared->is_connected()) {
+        if (self::$shared !== null && self::$shared->isConnected()) {
             return self::$shared;
         }
 
@@ -50,7 +50,7 @@ class RabbitMQConnection
     {
         if (self::$shared !== null) {
             try {
-                if (self::$shared->is_connected()) {
+                if (self::$shared->isConnected()) {
                     self::$shared->close();
                 }
             } catch (\Throwable $e) {

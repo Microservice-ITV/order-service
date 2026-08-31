@@ -21,11 +21,15 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
     volumes:
       - ./src/app:${PHP_WORKING_DIR}/app:cached
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached
       - ./src/database:${PHP_WORKING_DIR}/database
       - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
       - ./.env.example:${PHP_WORKING_DIR}/.env.example
       - ./.env:${PHP_WORKING_DIR}/.env
     healthcheck:
@@ -77,11 +81,15 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
     volumes:
       - ./src/app:${PHP_WORKING_DIR}/app:cached
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached
       - ./src/database:${PHP_WORKING_DIR}/database
       - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
       - ./.env.example:${PHP_WORKING_DIR}/.env.example
       - ./.env:${PHP_WORKING_DIR}/.env
     depends_on:

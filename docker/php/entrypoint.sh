@@ -25,10 +25,20 @@ if [ "$AUTO_FIX_PERMISSIONS" = "true" ]; then
     find "$APP_ROOT/storage" "$APP_ROOT/bootstrap/cache" -type f -exec chmod 664 {} \; 2>/dev/null || true
 fi
 
-# Run migrations and seeders if not already ran
-if [ ! -f "$APP_ROOT/storage/framework/.migrated" ]; then
-    php artisan migrate --force --seed --ansi 2>&1
-    touch "$APP_ROOT/storage/framework/.migrated"
-fi
+# Run migrations and seeders (idempotent). Retry a few times to wait for the database to be ready.
+MAX_RETRIES=5
+RETRY_DELAY=5
+i=0
+until php artisan migrate --force --seed --ansi 2>&1; do
+    i=$((i+1))
+    if [ "$i" -ge "$MAX_RETRIES" ]; then
+        echo "Migrations failed after $i attempts; continuing startup (containers may be unhealthy)"
+        break
+    fi
+    echo "Waiting for database to be ready... retry #$i in ${RETRY_DELAY}s"
+    sleep $RETRY_DELAY
+done
+# Mark as migrated so other tooling can check this file if needed
+touch "$APP_ROOT/storage/framework/.migrated"
 
 exec php-fpm

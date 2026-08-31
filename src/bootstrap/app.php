@@ -15,6 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Ensure CORS headers are sent for all API routes (e.g. frontend at :3000 → :8001)
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
+
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
             'webhook.signature' => \App\Http\Middleware\VerifyWebhookSignature::class,
