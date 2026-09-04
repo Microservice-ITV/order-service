@@ -11,6 +11,6 @@ return [
     | to propagate the value to downstream services via events.
     |
     */
-    'expire_after_minutes' => (int) env('CHECKOUT_EXPIRE_AFTER_MINUTES', 15),
+    'expire_after_minutes' => (int) env('CHECKOUT_EXPIRE_AFTER_MINUTES', 45),
 ];
 
