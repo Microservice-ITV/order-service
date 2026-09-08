@@ -35,6 +35,16 @@ class SagaCheckoutService
         $this->eventPublisher = $eventPublisher;
     }
 
+    public function getCheckoutService(): CheckoutService
+    {
+        return $this->checkoutService;
+    }
+
+    public function getSagaRepository(): SagaRepository
+    {
+        return $this->sagaOrchestrator->getSagaRepository();
+    }
+
     /**
      * Start checkout with saga orchestration
      */
@@ -50,10 +60,12 @@ class SagaCheckoutService
             );
 
             if ($checkoutResult['existing']) {
+                $saga = $this->sagaOrchestrator->sagaRepository->findByOrderId($checkoutResult['checkout']->id);
+
                 return [
                     'checkout' => $checkoutResult['checkout'],
                     'existing' => true,
-                    'saga_id' => null,
+                    'saga_id' => $saga ? $saga->saga_id : null,
                     'message' => 'Checkout session already exists'
                 ];
             }

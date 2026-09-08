@@ -136,7 +136,7 @@ class SagaCheckoutController extends Controller
     public function getCheckoutStatus(string $checkoutId): JsonResponse
     {
         try {
-            $checkout = $this->sagaCheckoutService->checkoutService->validateCheckout($checkoutId);
+            $checkout = $this->sagaCheckoutService->getCheckoutService()->validateCheckout($checkoutId);
             
             if (!$checkout) {
                 return response()->json([

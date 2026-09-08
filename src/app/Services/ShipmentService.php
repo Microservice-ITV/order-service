@@ -8,6 +8,7 @@ use App\Enums\OrderStatus;
 use App\Exceptions\BusinessException;
 use App\Models\CheckoutItem;
 use App\Models\Order;
+use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Str;
@@ -65,6 +66,20 @@ final class ShipmentService
         $order->refresh();
 
         $this->publishShipmentCreated($order);
+
+        // Advance the saga tracker: shipment creation succeeded.
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($order->checkout_id);
+        if ($saga && !in_array('SHIPMENT_CREATION', $saga->completed_steps ?? [], true)) {
+            $sagaRepository->completeStep($saga->saga_id, 'SHIPMENT_CREATION');
+
+            logger()->info('SAGA_STEP_COMPLETED_FROM_SHIPMENT_CREATED', [
+                'saga_id'    => $saga->saga_id,
+                'step'       => 'SHIPMENT_CREATION',
+                'checkout_id' => $order->checkout_id,
+                'order_id'   => $order->order_id,
+            ]);
+        }
 
         return $order;
     }

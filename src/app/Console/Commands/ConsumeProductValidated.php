@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Models\CheckoutItem;
+use App\Repositories\SagaRepository;
 use App\Services\CheckoutService;
 use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -99,6 +100,19 @@ class ConsumeProductValidated extends BaseConsumer
             'checkout_id'    => $checkoutId,
             'reservation_id' => $reservationId,
         ]);
+
+        // Advance the saga tracker: inventory reservation succeeded.
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga && !in_array('INVENTORY_RESERVATION', $saga->completed_steps ?? [], true)) {
+            $sagaRepository->completeStep($saga->saga_id, 'INVENTORY_RESERVATION');
+
+            logger()->info('SAGA_STEP_COMPLETED_FROM_STOCK_RESERVED', [
+                'saga_id'  => $saga->saga_id,
+                'step'     => 'INVENTORY_RESERVATION',
+                'checkout_id' => $checkoutId,
+            ]);
+        }
 
         $expireAtIso = $checkout->getExpireAtIso();
         if ($expireAtIso === null) {

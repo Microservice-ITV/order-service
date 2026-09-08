@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
+use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -52,6 +53,20 @@ class ConsumePaymentFailed extends BaseConsumer
                 'checkout_id' => $checkoutId,
             ]);
             return;
+        }
+
+        // Advance the saga tracker: payment processing failed → compensation flagged.
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga && !in_array('PAYMENT_PROCESSING', $saga->failed_steps ?? [], true)) {
+            $sagaRepository->failStep($saga->saga_id, 'PAYMENT_PROCESSING', $reason ?? 'PAYMENT_FAILED');
+
+            logger()->info('SAGA_STEP_FAILED_FROM_PAYMENT_FAILED', [
+                'saga_id'  => $saga->saga_id,
+                'step'     => 'PAYMENT_PROCESSING',
+                'checkout_id' => $checkoutId,
+                'reason'   => $reason,
+            ]);
         }
 
         $checkout = $checkoutService->findById($checkoutId);

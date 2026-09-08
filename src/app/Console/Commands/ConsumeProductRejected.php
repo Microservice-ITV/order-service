@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
+use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\CheckoutService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -66,6 +67,20 @@ class ConsumeProductRejected extends BaseConsumer
                 'checkout_id' => $checkoutId,
             ]);
             return;
+        }
+
+        // Advance the saga tracker: inventory reservation failed → compensation flagged.
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga && !in_array('INVENTORY_RESERVATION', $saga->failed_steps ?? [], true)) {
+            $sagaRepository->failStep($saga->saga_id, 'INVENTORY_RESERVATION', $reason);
+
+            logger()->info('SAGA_STEP_FAILED_FROM_STOCK_REJECTED', [
+                'saga_id'  => $saga->saga_id,
+                'step'     => 'INVENTORY_RESERVATION',
+                'checkout_id' => $checkoutId,
+                'reason'   => $reason,
+            ]);
         }
 
         $checkout = $checkoutService->findById($checkoutId);

@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
+use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Logging\LogMessage;
 use App\Models\CheckoutSession;
@@ -146,6 +147,20 @@ class ConsumePaymentSucceeded extends BaseConsumer
             if (!isset($order)) {
                 // Checkout already processed — safe to ignore
                 return;
+            }
+
+            // Advance the saga tracker: payment processing succeeded.
+            $sagaRepository = app(SagaRepository::class);
+            $saga = $sagaRepository->findByOrderId($checkoutId);
+            if ($saga && !in_array('PAYMENT_PROCESSING', $saga->completed_steps ?? [], true)) {
+                $sagaRepository->completeStep($saga->saga_id, 'PAYMENT_PROCESSING');
+
+                logger()->info('SAGA_STEP_COMPLETED_FROM_PAYMENT_SUCCEEDED', [
+                    'saga_id'  => $saga->saga_id,
+                    'step'     => 'PAYMENT_PROCESSING',
+                    'checkout_id' => $checkoutId,
+                    'order_id' => $order->order_id,
+                ]);
             }
 
             logger()->info(LogMessage::ORDER_CREATED_AFTER_PAYMENT, [
