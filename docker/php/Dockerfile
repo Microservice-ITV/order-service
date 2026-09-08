@@ -20,7 +20,7 @@ RUN apt-get update \
         pdo_mysql \
         sockets \
         zip \
-    && pecl install redis \
+    && pecl channel-update pecl.php.net && pecl install redis-6.1.0 \
     && docker-php-ext-enable redis \
     && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
     && rm -rf /var/lib/apt/lists/*

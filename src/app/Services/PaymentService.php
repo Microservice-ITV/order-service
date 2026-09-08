@@ -95,7 +95,6 @@ final class PaymentService
 
         /** @var \Illuminate\Http\Client\Response $response */
         $response = Http::timeout(15)
-            ->retry(2, 200)
             ->withHeaders([
                 'Content-Type'  => 'application/json',
                 'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
@@ -103,14 +102,29 @@ final class PaymentService
             ->patch($baseUrl . '/api/v1/payments/intents/' . rawurlencode($checkoutId), $payload);
 
         if (!$response->successful()) {
-            logger()->error('PAYMENT_INTENT_UPDATE_FAILED', [
-                'status' => $response->status(),
-                'body' => $response->json(),
-            ]);
             $body = $response->json();
             $err = is_array($body) && isset($body['error']['message'])
                 ? (string) $body['error']['message']
                 : $response->body();
+
+            logger()->warning('PAYMENT_INTENT_UPDATE_FAILED', [
+                'status' => $response->status(),
+                'error' => $err,
+            ]);
+
+            if (str_contains($err, 'status of succeed') || str_contains($err, 'succeeded')) {
+                logger()->info('PAYMENT_INTENT_ALREADY_SUCCEEDED', [
+                    'checkout_id' => $checkoutId,
+                ]);
+                return [
+                    'payment_id' => null,
+                    'client_secret' => null,
+                    'amount' => $amount,
+                    'expires_at' => null,
+                    'already_succeeded' => true,
+                ];
+            }
+
             throw new \RuntimeException('Failed to update payment intent: ' . $err);
         }
 

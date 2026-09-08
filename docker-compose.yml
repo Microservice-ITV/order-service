@@ -21,21 +21,27 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
     volumes:
       - ./src/app:${PHP_WORKING_DIR}/app:cached
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached
       - ./src/database:${PHP_WORKING_DIR}/database
       - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
       - ./.env.example:${PHP_WORKING_DIR}/.env.example
       - ./.env:${PHP_WORKING_DIR}/.env
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f php-fpm || exit 1"]
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     depends_on:
       order-mysql:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - app-network
@@ -62,6 +68,28 @@ services:
     networks:
       - app-network
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: orderservice-rabbitmq
+    hostname: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - app-network
+
   order-consumer:
     build:
       context: .
@@ -77,11 +105,50 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
     volumes:
       - ./src/app:${PHP_WORKING_DIR}/app:cached
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached
       - ./src/database:${PHP_WORKING_DIR}/database
       - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
+      - ./.env.example:${PHP_WORKING_DIR}/.env.example
+      - ./.env:${PHP_WORKING_DIR}/.env
+    depends_on:
+      order-mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint: ["php", "artisan", "consume:all"]
+
+  order-saga-manager:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: orderservice-saga-manager
+    working_dir: ${PHP_WORKING_DIR}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
+    volumes:
+      - ./src/app:${PHP_WORKING_DIR}/app:cached
+      - ./src/routes:${PHP_WORKING_DIR}/routes:cached
+      - ./src/database:${PHP_WORKING_DIR}/database
+      - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
       - ./.env.example:${PHP_WORKING_DIR}/.env.example
       - ./.env:${PHP_WORKING_DIR}/.env
     depends_on:
@@ -89,7 +156,14 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    entrypoint: ["php", "artisan", "consume:all"]
+    entrypoint: >
+      sh -c "
+        while true; do
+          echo \"Running saga timeout processing at \$(date)\"
+          php artisan saga:manage process-timeouts --limit=50
+          sleep 300
+        done
+      "
 
   order-nginx:
     image: nginx:stable-alpine
@@ -106,5 +180,46 @@ services:
     networks:
       - app-network
 
+  order-saga-stats:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: orderservice-saga-stats
+    working_dir: ${PHP_WORKING_DIR}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
+    volumes:
+      - ./src/app:${PHP_WORKING_DIR}/app:cached
+      - ./src/routes:${PHP_WORKING_DIR}/routes:cached
+      - ./src/database:${PHP_WORKING_DIR}/database
+      - ./src/config:${PHP_WORKING_DIR}/config
+      - ./src/bootstrap:${PHP_WORKING_DIR}/bootstrap:cached
+      - ./src/storage:${PHP_WORKING_DIR}/storage
+      - ../logs:${PHP_WORKING_DIR}/logs
+      - ./.env.example:${PHP_WORKING_DIR}/.env.example
+      - ./.env:${PHP_WORKING_DIR}/.env
+    depends_on:
+      order-mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint: >
+      sh -c "
+        while true; do
+          echo \"Running saga statistics cleanup at \$(date)\"
+          php artisan saga:manage cleanup-old-sagas --days=7
+          sleep 86400
+        done
+      "
+
 volumes:
   mysql_data:
+  rabbitmq_data:

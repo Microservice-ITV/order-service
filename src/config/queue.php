@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'default' => env('QUEUE_CONNECTION', 'database'),
+    'default' => env('QUEUE_CONNECTION', 'rabbitmq'),
 
     /*
     |--------------------------------------------------------------------------
@@ -42,6 +42,44 @@ return [
             'queue' => env('DB_QUEUE', 'default'),
             'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
             'after_commit' => false,
+        ],
+
+        'rabbitmq' => [
+            'driver' => 'rabbitmq',
+            'host' => env('RABBITMQ_HOST', 'localhost'),
+            'port' => env('RABBITMQ_PORT', 5672),
+            'username' => env('RABBITMQ_USER', 'guest'),
+            'password' => env('RABBITMQ_PASSWORD', 'guest'),
+            'vhost' => env('RABBITMQ_VHOST', '/'),
+            'queue' => env('RABBITMQ_QUEUE', 'default'),
+            'exchange' => env('RABBITMQ_EXCHANGE', 'order_events'),
+            'ssl_options' => [
+                'verify_peer' => env('RABBITMQ_SSL_VERIFY_PEER', false),
+                'verify_peer_name' => env('RABBITMQ_SSL_VERIFY_PEER_NAME', false),
+                'cafile' => env('RABBITMQ_SSL_CAFILE'),
+                'local_cert' => env('RABBITMQ_SSL_LOCAL_CERT'),
+                'local_key' => env('RABBITMQ_SSL_LOCAL_KEY'),
+                'passphrase' => env('RABBITMQ_SSL_PASSPHRASE'),
+            ],
+            'queue_options' => [
+                'routing' => env('RABBITMQ_ROUTING', 'direct'),
+                'queue' => [
+                    'durable' => true,
+                    'arguments' => [],
+                ],
+                'exchange' => [
+                    'durable' => true,
+                    'type' => env('RABBITMQ_EXCHANGE_TYPE', 'direct'),
+                ],
+            ],
+            'qos' => [
+                'prefetch_size' => 0,
+                'prefetch_count' => 10,
+                'global' => false,
+            ],
+            'timeout' => 5,
+            'retries' => 3,
+            'sleep' => 1,
         ],
 
         'beanstalkd' => [

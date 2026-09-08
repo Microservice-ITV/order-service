@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Models\CheckoutItem;
+use App\Repositories\SagaRepository;
 use App\Services\CheckoutService;
 use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -81,12 +82,37 @@ class ConsumeProductValidated extends BaseConsumer
             throw new \RuntimeException('Invalid reservation_id');
         }
 
-        $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
+        $stockConfirmed = $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);
+
+        if (!$stockConfirmed && $checkout->status_id === \App\Enums\OrderStatus::PENDING_STOCK) {
+            // Transition failed while session is still PENDING_STOCK: without
+            // requeueing, the event would be acked and the checkout stuck in
+            // PENDING_STOCK ("Confirming stock availability...") indefinitely.
+            logger()->error('CHECKOUT_STOCK_CONFIRM_TRANSITION_FAILED_REQUEUE', [
+                'checkout_id'    => $checkoutId,
+                'reservation_id' => $reservationId,
+                'status_id'      => $checkout->status_id->name,
+            ]);
+            throw new \RuntimeException("Failed to transition checkout {$checkoutId} out of PENDING_STOCK");
+        }
 
         logger()->info(LogMessage::CHECKOUT_STOCK_CONFIRMED, [
             'checkout_id'    => $checkoutId,
             'reservation_id' => $reservationId,
         ]);
+
+        // Advance the saga tracker: inventory reservation succeeded.
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga && !in_array('INVENTORY_RESERVATION', $saga->completed_steps ?? [], true)) {
+            $sagaRepository->completeStep($saga->saga_id, 'INVENTORY_RESERVATION');
+
+            logger()->info('SAGA_STEP_COMPLETED_FROM_STOCK_RESERVED', [
+                'saga_id'  => $saga->saga_id,
+                'step'     => 'INVENTORY_RESERVATION',
+                'checkout_id' => $checkoutId,
+            ]);
+        }
 
         $expireAtIso = $checkout->getExpireAtIso();
         if ($expireAtIso === null) {

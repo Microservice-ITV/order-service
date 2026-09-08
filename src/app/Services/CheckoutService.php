@@ -496,7 +496,7 @@ class CheckoutService
                 'per_shop' => $normalizedShopShippings !== null,
             ]);
 
-            return [
+            $result = [
                 'not_found' => false,
                 'invalid_state' => false,
                 'status' => $checkout->status_id->name,
@@ -506,6 +506,12 @@ class CheckoutService
                 'client_secret' => $paymentResult['client_secret'],
                 'shop_shippings' => $normalizedShopShippings,
             ];
+
+            if (!empty($paymentResult['already_succeeded'])) {
+                $result['already_succeeded'] = true;
+            }
+
+            return $result;
         }
 
         $updatedAt = now();

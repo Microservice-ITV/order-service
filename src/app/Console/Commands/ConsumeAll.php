@@ -93,21 +93,30 @@ class ConsumeAll extends Command
                 function (AMQPMessage $msg) use ($ch, $handlerClass, $self, $name, $queue) {
                     $payload = json_decode($msg->body, true);
                     if (!is_array($payload)) {
-                        $ch->basic_ack($msg->delivery_tag);
+                        $ch->basic_ack($msg->getDeliveryTag());
                         return;
                     }
 
+                    $eventId = $payload['event_id'] ?? 'none';
+                    $self->info("[{$name}] RECEIVED event_id={$eventId} queue={$queue}");
+
                     try {
+                        $self->info("[{$name}] resolving handler...");
                         $handler = app($handlerClass);
+                        $self->info("[{$name}] calling process()...");
                         $handler->process($payload);
-                        $ch->basic_ack($msg->delivery_tag);
+                        $self->info("[{$name}] process() DONE, acking...");
+                        $ch->basic_ack($msg->getDeliveryTag());
+                        $self->info("[{$name}] acked OK");
                     } catch (Throwable $e) {
+                        $self->error("[{$name}] FAILED: {$e->getMessage()}");
                         logger()->error('INLINE_CONSUMER_FAILED', [
                             'consumer' => $name,
                             'queue' => $queue,
                             'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString(),
                         ]);
-                        $ch->basic_nack($msg->delivery_tag, false, true);
+                        $ch->basic_nack($msg->getDeliveryTag(), false, true);
                     }
                 }
             );
@@ -142,12 +151,26 @@ class ConsumeAll extends Command
             while (true) {
                 foreach ($channels as $name => $ch) {
                     try {
-                        $ch->wait();
+                        // Wait up to 5 seconds for activity on the channel to reduce noisy timeouts
+                        $ch->wait(null, false, 5);
                     } catch (AMQPConnectionClosedException $e) {
                         $this->error("Connection lost on {$name}: {$e->getMessage()}");
                         throw $e;
+                    } catch (\PhpAmqpLib\Exception\AMQPTimeoutException $e) {
+                        // Normal timeout waiting for messages; not an error — continue loop
+                        continue;
                     } catch (Throwable $e) {
-                        $this->error("Channel error on {$name}: {$e->getMessage()}");
+                        // Some network-timeout-like errors are surfaced as generic Throwables with
+                        // messages like "The connection timed out after 1 sec while awaiting incoming data".
+                        // Treat those as informational (they indicate no activity) rather than errors.
+                        $msg = $e->getMessage();
+                        if (stripos($msg, 'timed out') !== false || stripos($msg, 'awaiting incoming data') !== false) {
+                            // log at debug level if available, otherwise as a comment
+                            $this->comment("Transient channel timeout on {$name}: {$msg}");
+                            continue;
+                        }
+
+                        $this->error("Channel error on {$name}: {$msg}");
                     }
                 }
             }
