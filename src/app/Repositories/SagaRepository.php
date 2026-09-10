@@ -47,7 +47,7 @@ class SagaRepository
      */
     public function findByOrderId(string $orderId): ?SagaState
     {
-        return SagaState::where('order_id', $orderId)->active()->first();
+        return SagaState::where('order_id', $orderId)->first();
     }
 
     /**
@@ -55,7 +55,7 @@ class SagaRepository
      */
     public function findByCorrelationId(string $correlationId): ?SagaState
     {
-        return SagaState::where('correlation_id', $correlationId)->active()->first();
+        return SagaState::where('correlation_id', $correlationId)->first();
     }
 
     /**
@@ -93,7 +93,7 @@ class SagaRepository
         
         $updateData = [
             'completed_steps' => $completedSteps,
-            'current_step' => count($completedSteps) + 1,
+            'current_step' => count($completedSteps),
         ];
 
         // Check if saga is completed

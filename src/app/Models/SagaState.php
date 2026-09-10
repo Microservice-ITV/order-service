@@ -79,7 +79,7 @@ class SagaState extends Model
         
         $this->update([
             'completed_steps' => $completedSteps,
-            'current_step' => count($completedSteps) + 1,
+            'current_step' => count($completedSteps),
         ]);
 
         $this->checkCompletion();

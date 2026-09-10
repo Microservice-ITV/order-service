@@ -146,6 +146,11 @@ class SagaCheckoutController extends Controller
             }
 
             $saga = $this->sagaCheckoutService->getSagaRepository()->findByOrderId($checkoutId);
+            
+            // Refresh the saga model to get the latest data from database
+            if ($saga) {
+                $saga->refresh();
+            }
 
             return response()->json([
                 'success' => true,
