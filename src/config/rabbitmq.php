@@ -17,5 +17,6 @@ return [
         'stock_confirmed' => env('RABBITMQ_QUEUE_PRODUCT_STOCK_CONFIRMED', env('RABBITMQ_QUEUE_STOCK_CONFIRMED')),
         'payment_completed' => env('RABBITMQ_QUEUE_PAYMENT_COMPLETED'),
         'payment_failed' => env('RABBITMQ_QUEUE_PAYMENT_FAILED'),
+        'flash_deal_stock' => env('RABBITMQ_QUEUE_FLASH_DEAL_STOCK', 'order_service.flash_deal_stock'),
     ],
 ];

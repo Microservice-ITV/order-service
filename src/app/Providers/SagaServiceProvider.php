@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Repositories\SagaRepository;
 use App\Services\SagaCheckoutService;
 use App\Services\SagaOrchestrator;
+use App\Services\RabbitMQ\FlashDealStockConsumer;
 use App\Services\RabbitMQ\SagaConsumer;
 use Illuminate\Support\ServiceProvider;
 
@@ -45,6 +46,12 @@ class SagaServiceProvider extends ServiceProvider
                 $app->make(SagaRepository::class)
             );
         });
+
+        $this->app->bind(FlashDealStockConsumer::class, function ($app) {
+            return new FlashDealStockConsumer(
+                $app->make(SagaOrchestrator::class)
+            );
+        });
     }
 
     /**
@@ -55,6 +62,7 @@ class SagaServiceProvider extends ServiceProvider
         // Register the saga consumer if we're in the right environment
         if (config('app.env') !== 'testing') {
             $this->app->make(SagaConsumer::class);
+            $this->app->make(FlashDealStockConsumer::class);
         }
     }
 }

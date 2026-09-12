@@ -65,6 +65,7 @@ final class CheckoutRequest extends FormRequest
             'items.*.product_id'   => ['required', 'string', 'uuid'],
             'items.*.variant_id'   => ['nullable', 'string', 'uuid'],
             'items.*.qty'          => ['required', 'integer', 'min:1'],
+            'items.*.flash_deal_item_id' => ['nullable', 'string', 'uuid'],
         ];
     }
 }

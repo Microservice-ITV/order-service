@@ -816,6 +816,10 @@ class CheckoutService
                     ? (string) $item['variant_id']
                     : null;
 
+                $flashDealItemId = isset($item['flash_deal_item_id']) && $item['flash_deal_item_id'] !== ''
+                    ? (string) $item['flash_deal_item_id']
+                    : null;
+
                 $rows[] = [
                     'checkout_id' => $checkoutSession->id,
                     'product_id' => $productId,
@@ -832,6 +836,7 @@ class CheckoutService
                     'shop_id' => $shopId,
                     'image_url' => $imageUrl,
                     'currency' => $currency,
+                    'flash_deal_item_id' => $flashDealItemId,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
@@ -862,6 +867,7 @@ class CheckoutService
                 'shop_id' => $item->shop_id,
                 'category_id' => $item->category_id,
                 'available_stock' => isset($item->available_stock) ? (int) $item->available_stock : null,
+                'flash_deal_item_id' => $item->flash_deal_item_id ?? null,
             ];
         })->values()->all();
 

@@ -46,4 +46,15 @@ enum EventTopic: string
     case PAYMENT_CANCEL_COMPLETED = 'payment.cancel.completed';
     case SHIPMENT_CANCEL_REQUESTED = 'shipment.cancel.requested';
     case SHIPMENT_CANCEL_COMPLETED = 'shipment.cancel.completed';
+
+    // Flash Deal events
+    case FLASH_DEAL_STOCK_RESERVE_REQUESTED = 'flash_deal.stock.reserve_requested';
+    case FLASH_DEAL_STOCK_RESERVED = 'flash_deal.stock.reserved';
+    case FLASH_DEAL_STOCK_REJECTED = 'flash_deal.stock.rejected';
+    case FLASH_DEAL_STOCK_RELEASE_REQUESTED = 'flash_deal.stock.release_requested';
+    case FLASH_DEAL_STOCK_RELEASE_COMPLETED = 'flash_deal.stock.release_completed';
+
+    // Flash Deal confirmation & compensation events
+    case FLASH_DEAL_CONFIRM = 'flash_deal.confirm';
+    case FLASH_DEAL_COMPENSATION = 'flash_deal.compensation';
 }

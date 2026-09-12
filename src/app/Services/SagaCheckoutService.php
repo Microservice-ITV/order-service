@@ -196,6 +196,7 @@ class SagaCheckoutService
                 'shop_id' => $item->shop_id,
                 'category_id' => $item->category_id,
                 'available_stock' => isset($item->available_stock) ? (int) $item->available_stock : null,
+                'flash_deal_item_id' => $item->flash_deal_item_id ?? null,
             ];
         })->values()->all();
 

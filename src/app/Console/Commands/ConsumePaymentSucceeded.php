@@ -193,8 +193,46 @@ class ConsumePaymentSucceeded extends BaseConsumer
             Publisher::publishStatic(EventTopic::ORDER_PAID, $payload);
 
             logger()->info('ORDER_PAID_EVENT_PUBLISHED', [
-            'payload' => $payload,
-        ]);
+                'payload' => $payload,
+            ]);
+
+            /**
+             * Publish FLASH_DEAL_CONFIRM for any flash-deal line items.
+             * This finalizes the reservation -> sale conversion in product-service.
+             */
+            $checkout->loadMissing('items');
+            $flashDealItems = $checkout->items
+                ->filter(fn($item) => !empty($item->flash_deal_item_id))
+                ->values();
+
+            if ($flashDealItems->isNotEmpty()) {
+                $confirmItems = $flashDealItems->map(function ($item) {
+                    return [
+                        'flash_deal_item_id' => $item->flash_deal_item_id,
+                        'quantity' => (int) $item->qty,
+                        'price' => (float) $item->price,
+                    ];
+                })->all();
+
+                $confirmPayload = EventPayloadBuilder::build(
+                    EventTopic::FLASH_DEAL_CONFIRM,
+                    $correlationId,
+                    [
+                        'order_id'    => $order->order_id,
+                        'checkout_id' => $checkoutId,
+                        'user_id'     => (string) $checkout->user_id,
+                        'items'       => $confirmItems,
+                    ]
+                );
+
+                Publisher::publishStatic(EventTopic::FLASH_DEAL_CONFIRM, $confirmPayload);
+
+                logger()->info('FLASH_DEAL_CONFIRM_EVENT_PUBLISHED', [
+                    'order_id'     => $order->order_id,
+                    'checkout_id'  => $checkoutId,
+                    'item_count'   => $confirmItems,
+                ]);
+            }
 
         } catch (Throwable $e) {
             logger()->error(LogMessage::PAYMENT_COMPLETED_PROCESSING_FAILED, [

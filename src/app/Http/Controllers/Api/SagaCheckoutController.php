@@ -27,14 +27,16 @@ class SagaCheckoutController extends Controller
     public function startCheckout(Request $request): JsonResponse
     {
         try {
-            $request->validate([
-                'items' => 'required|array|min:1',
-                'items.*.product_id' => 'required|string',
-                'items.*.qty' => 'required|integer|min:1',
-                'user_id' => 'required|string',
-                'delivery_address' => 'nullable|array',
-                'idempotency_key' => 'required|string',
-            ]);
+$request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|string',
+            'items.*.variant_id' => 'nullable|string',
+            'items.*.qty' => 'required|integer|min:1',
+            'items.*.flash_deal_item_id' => 'nullable|string',
+            'user_id' => 'required|string',
+            'delivery_address' => 'nullable|array',
+            'idempotency_key' => 'required|string',
+        ]);
 
             $result = $this->sagaCheckoutService->startSagaCheckout(
                 $request->input('items'),

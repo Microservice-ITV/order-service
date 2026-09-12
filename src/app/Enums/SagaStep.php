@@ -2,6 +2,8 @@
 
 namespace App\Enums;
 
+use App\Enums\EventTopic;
+
 /**
  * Saga Step Definitions
  * 
@@ -18,8 +20,16 @@ class SagaStep
             'failure_event' => EventTopic::SAGA_INVENTORY_RESERVATION_FAILED,
             'compensation_event' => EventTopic::INVENTORY_RELEASE_REQUESTED,
         ],
-        'PAYMENT_PROCESSING' => [
+        'FLASH_DEAL_INVENTORY_RESERVATION' => [
             'order' => 2,
+            'name' => 'Flash Deal Inventory Reservation',
+            'event' => EventTopic::FLASH_DEAL_STOCK_RESERVE_REQUESTED,
+            'completion_event' => EventTopic::FLASH_DEAL_STOCK_RESERVED,
+            'failure_event' => EventTopic::FLASH_DEAL_STOCK_REJECTED,
+            'compensation_event' => EventTopic::FLASH_DEAL_STOCK_RELEASE_REQUESTED,
+        ],
+        'PAYMENT_PROCESSING' => [
+            'order' => 3,
             'name' => 'Payment Processing',
             'event' => EventTopic::SAGA_PAYMENT_REQUESTED,
             'completion_event' => EventTopic::SAGA_PAYMENT_COMPLETED,
@@ -27,7 +37,7 @@ class SagaStep
             'compensation_event' => EventTopic::PAYMENT_CANCEL_REQUESTED,
         ],
         'SHIPMENT_CREATION' => [
-            'order' => 3,
+            'order' => 4,
             'name' => 'Shipment Creation',
             'event' => EventTopic::SAGA_SHIPMENT_REQUESTED,
             'completion_event' => EventTopic::SAGA_SHIPMENT_COMPLETED,
@@ -42,17 +52,24 @@ class SagaStep
             'name' => 'Shipment Cancellation',
             'event' => EventTopic::SHIPMENT_CANCEL_REQUESTED,
             'completion_event' => EventTopic::SHIPMENT_CANCEL_COMPLETED,
-            'depends_on' => ['PAYMENT_PROCESSING', 'INVENTORY_RESERVATION'],
+            'depends_on' => ['PAYMENT_PROCESSING', 'INVENTORY_RESERVATION', 'FLASH_DEAL_INVENTORY_RESERVATION'],
         ],
         'PAYMENT_CANCELLATION' => [
             'order' => 2,
             'name' => 'Payment Cancellation',
             'event' => EventTopic::PAYMENT_CANCEL_REQUESTED,
             'completion_event' => EventTopic::PAYMENT_CANCEL_COMPLETED,
+            'depends_on' => ['INVENTORY_RESERVATION', 'FLASH_DEAL_INVENTORY_RESERVATION'],
+        ],
+        'FLASH_DEAL_INVENTORY_RELEASE' => [
+            'order' => 3,
+            'name' => 'Flash Deal Inventory Release',
+            'event' => EventTopic::FLASH_DEAL_STOCK_RELEASE_REQUESTED,
+            'completion_event' => EventTopic::FLASH_DEAL_STOCK_RELEASE_COMPLETED,
             'depends_on' => ['INVENTORY_RESERVATION'],
         ],
         'INVENTORY_RELEASE' => [
-            'order' => 3,
+            'order' => 4,
             'name' => 'Inventory Release',
             'event' => EventTopic::INVENTORY_RELEASE_REQUESTED,
             'completion_event' => EventTopic::INVENTORY_RELEASE_COMPLETED,

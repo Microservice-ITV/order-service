@@ -30,6 +30,7 @@ class CheckoutItem extends Model
         'shop_id',
         'image_url',
         'currency',
+        'flash_deal_item_id',
     ];
 
     public function checkoutSession(): BelongsTo

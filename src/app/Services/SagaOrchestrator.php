@@ -47,13 +47,29 @@ class SagaOrchestrator
     {
         $sagaId = (string) \Illuminate\Support\Str::uuid();
         
+        // Detect flash deal items in cart
+        $hasFlashDealItems = $this->hasFlashDealItems($data['items'] ?? []);
+        $flashDealItemIds = $this->extractFlashDealItemIds($data['items'] ?? []);
+        
+        $sagaData = array_merge($data, [
+            'has_flash_deal_items' => $hasFlashDealItems,
+            'flash_deal_item_ids' => $flashDealItemIds,
+        ]);
+        
+        // Calculate total steps based on flash deal items
+        $totalSteps = count(SagaStep::ORDER_CREATION_STEPS);
+        if (!$hasFlashDealItems) {
+            // Skip flash deal step if no flash deal items
+            $totalSteps--;
+        }
+
         $saga = $this->sagaRepository->create([
             'saga_id' => $sagaId,
             'type' => $type,
             'order_id' => $data['order_id'] ?? null,
             'correlation_id' => $data['correlation_id'] ?? null,
-            'data' => $data,
-            'total_steps' => count(SagaStep::ORDER_CREATION_STEPS),
+            'data' => $sagaData,
+            'total_steps' => $totalSteps,
         ]);
 
         $saga->start();
@@ -62,7 +78,7 @@ class SagaOrchestrator
         $this->eventPublisher->publish(EventTopic::SAGA_ORDER_CREATED, [
             'saga_id' => $sagaId,
             'type' => $type,
-            'data' => $data,
+            'data' => $sagaData,
             'timestamp' => now()->toISOString(),
         ]);
 
@@ -70,9 +86,40 @@ class SagaOrchestrator
             'saga_id' => $sagaId,
             'type' => $type,
             'order_id' => $data['order_id'] ?? null,
+            'has_flash_deal_items' => $hasFlashDealItems,
         ]);
 
         return $sagaId;
+    }
+
+    /**
+     * Check if cart items contain flash deal items
+     */
+    private function hasFlashDealItems(array $items): bool
+    {
+        foreach ($items as $item) {
+            if (isset($item['is_flash_deal']) && $item['is_flash_deal'] === true) {
+                return true;
+            }
+            if (isset($item['flash_deal_item_id']) && !empty($item['flash_deal_item_id'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extract flash deal item IDs from cart items
+     */
+    private function extractFlashDealItemIds(array $items): array
+    {
+        $flashDealItemIds = [];
+        foreach ($items as $item) {
+            if (isset($item['flash_deal_item_id']) && !empty($item['flash_deal_item_id'])) {
+                $flashDealItemIds[] = $item['flash_deal_item_id'];
+            }
+        }
+        return $flashDealItemIds;
     }
 
     /**
@@ -107,11 +154,26 @@ class SagaOrchestrator
     }
 
     /**
+     * Get the applicable execution steps for a saga
+     */
+    private function getApplicableSteps(SagaState $saga): array
+    {
+        $steps = SagaStep::getExecutionOrder();
+        
+        // If no flash deal items, skip the flash deal inventory reservation step
+        if (!($saga->data['has_flash_deal_items'] ?? false)) {
+            unset($steps['FLASH_DEAL_INVENTORY_RESERVATION']);
+        }
+        
+        return $steps;
+    }
+
+    /**
      * Execute a specific step
      */
     private function executeStep(SagaState $saga): void
     {
-        $steps = SagaStep::getExecutionOrder();
+        $steps = $this->getApplicableSteps($saga);
         $currentStepName = null;
         
         // Find the next step to execute
@@ -138,13 +200,19 @@ class SagaOrchestrator
             'step_order' => $step['order'],
         ]);
 
+        // Prepare step data with flash deal item IDs if applicable
+        $stepData = $saga->data;
+        if ($currentStepName === 'FLASH_DEAL_INVENTORY_RESERVATION') {
+            $stepData['flash_deal_item_ids'] = $saga->data['flash_deal_item_ids'] ?? [];
+        }
+
         try {
             // Publish step event
             $this->eventPublisher->publish($step['event'], [
                 'saga_id' => $saga->saga_id,
                 'step' => $currentStepName,
                 'step_order' => $step['order'],
-                'data' => $saga->data,
+                'data' => $stepData,
                 'correlation_id' => $saga->correlation_id,
                 'timeout' => $this->stepTimeout,
             ]);
@@ -227,11 +295,26 @@ class SagaOrchestrator
     }
 
     /**
+     * Get the applicable compensation steps for a saga
+     */
+    private function getApplicableCompensationSteps(SagaState $saga): array
+    {
+        $steps = SagaStep::getCompensationOrder();
+        
+        // If no flash deal items, skip the flash deal inventory release step
+        if (!($saga->data['has_flash_deal_items'] ?? false)) {
+            unset($steps['FLASH_DEAL_INVENTORY_RELEASE']);
+        }
+        
+        return $steps;
+    }
+
+    /**
      * Execute compensation
      */
     private function executeCompensation(SagaState $saga): void
     {
-        $compensationSteps = SagaStep::getCompensationOrder();
+        $compensationSteps = $this->getApplicableCompensationSteps($saga);
         
         // Find next compensation step to execute
         $nextCompensationStep = null;
@@ -267,12 +350,18 @@ class SagaOrchestrator
             'step' => $nextCompensationStep,
         ]);
 
+        // Prepare compensation data with flash deal item IDs if applicable
+        $compensationData = $saga->data;
+        if ($nextCompensationStep === 'FLASH_DEAL_INVENTORY_RELEASE') {
+            $compensationData['flash_deal_item_ids'] = $saga->data['flash_deal_item_ids'] ?? [];
+        }
+
         try {
             // Publish compensation event
             $this->eventPublisher->publish($step['event'], [
                 'saga_id' => $saga->saga_id,
                 'step' => $nextCompensationStep,
-                'data' => $saga->data,
+                'data' => $compensationData,
                 'correlation_id' => $saga->correlation_id,
             ]);
 

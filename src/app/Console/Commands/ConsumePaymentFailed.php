@@ -84,6 +84,42 @@ class ConsumePaymentFailed extends BaseConsumer
             Publisher::publishStatic(EventTopic::ORDER_CANCELLED, $eventPayload);
         }
 
+        /**
+         * Publish FLASH_DEAL_COMPENSATION for any flash-deal line items.
+         * This releases the reservation in product-service on payment failure.
+         */
+        $checkout->loadMissing('items');
+        $flashDealItems = $checkout->items
+            ->filter(fn($item) => !empty($item->flash_deal_item_id))
+            ->values();
+
+        if ($flashDealItems->isNotEmpty()) {
+            $compensationItems = $flashDealItems->map(function ($item) {
+                return [
+                    'item_id'   => $item->flash_deal_item_id,
+                    'user_id'   => (string) $checkout->user_id,
+                    'quantity'  => (int) $item->qty,
+                ];
+            })->all();
+
+            $compensationPayload = EventPayloadBuilder::build(
+                EventTopic::FLASH_DEAL_COMPENSATION,
+                $correlationId,
+                [
+                    'checkout_id' => $checkoutId,
+                    'items'       => $compensationItems,
+                ]
+            );
+
+            Publisher::publishStatic(EventTopic::FLASH_DEAL_COMPENSATION, $compensationPayload);
+
+            logger()->info('FLASH_DEAL_COMPENSATION_EVENT_PUBLISHED', [
+                'checkout_id'  => $checkoutId,
+                'item_count'   => count($compensationItems),
+                'reason'       => $reason,
+            ]);
+        }
+
         logger()->info(LogMessage::CHECKOUT_PAYMENT_FAILED, [
             'checkout_id' => $checkoutId,
             'routing_key' => EventTopic::PAYMENT_FAILED->value,

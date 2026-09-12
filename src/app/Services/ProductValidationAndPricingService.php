@@ -30,6 +30,10 @@ final class ProductValidationAndPricingService
             if (!empty($item['variant_id'])) {
                 $row['variant_id'] = (string) $item['variant_id'];
             }
+            // Include flash_deal_item_id for flash deal stock validation
+            if (!empty($item['flash_deal_item_id'])) {
+                $row['flash_deal_item_id'] = (string) $item['flash_deal_item_id'];
+            }
 
             return $row;
         }, $items);
