@@ -173,7 +173,14 @@ class ConsumePaymentSucceeded extends BaseConsumer
             /**
              * Publish ORDER_PAID event
              * Downstream services (stock, shipping, email, etc.)
+             * Refresh checkout so promotion_snapshot reflects the latest address/promo quote
+             * (the in-memory model may have been loaded before Place Order updated it).
              */
+            $checkout = $checkoutService->findById($checkoutId) ?? $checkout;
+            $promotionSnapshot = is_array($checkout->promotion_snapshot)
+                ? $checkout->promotion_snapshot
+                : [];
+
             $payload = EventPayloadBuilder::build(EventTopic::ORDER_PAID, $correlationId, [
                 'order_id'       => $order->order_id,
                 'checkout_id'    => $checkoutId,
@@ -189,12 +196,21 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'updatedAt'      => is_string($sourceUpdatedAt) && $sourceUpdatedAt !== ''
                     ? $sourceUpdatedAt
                     : now()->utc()->toIso8601String(),
+                // Promotion usage commit payload (consumed by promotion-service)
+                'promotion_ids' => array_values($promotionSnapshot['promotion_ids'] ?? []),
+                'promotion_discount_total' => (float) ($checkout->promotion_discount_total ?? 0),
+                'applied_rewards' => array_values($promotionSnapshot['applied_rewards'] ?? []),
+                'promo_code' => $promotionSnapshot['promo_code'] ?? null,
             ]);
             Publisher::publishStatic(EventTopic::ORDER_PAID, $payload);
 
             logger()->info('ORDER_PAID_EVENT_PUBLISHED', [
-            'payload' => $payload,
-        ]);
+                'checkout_id' => $checkoutId,
+                'order_id' => $order->order_id,
+                'promotion_ids' => $payload['data']['promotion_ids'] ?? [],
+                'promo_code' => $payload['data']['promo_code'] ?? null,
+                'promotion_discount_total' => $payload['data']['promotion_discount_total'] ?? 0,
+            ]);
 
         } catch (Throwable $e) {
             logger()->error(LogMessage::PAYMENT_COMPLETED_PROCESSING_FAILED, [

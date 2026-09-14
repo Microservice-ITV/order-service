@@ -210,6 +210,10 @@ class SagaCheckoutService
             0.0
         );
 
+        $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
+        $discountTotal = round((float) ($checkout->promotion_discount_total ?? 0), 2);
+        $grandTotal = round((float) ($checkout->total ?? max(0, $subtotal + $shippingTotal - $discountTotal)), 2);
+
         $payload = EventPayloadBuilder::build(EventTopic::SAGA_ORDER_CREATED, $correlationId, [
             'saga_id' => $sagaId,
             'order_id' => $checkout->id,
@@ -217,8 +221,10 @@ class SagaCheckoutService
             'user_id' => (string) $checkout->user_id,
             'status' => 'CREATED',
             'items' => $eventItems,
-            'subtotal' => $subtotal,
-            'total' => (float) ($checkout->total ?? $subtotal),
+            'subtotal' => round($subtotal, 2),
+            'shipping_total' => $shippingTotal,
+            'promotion_discount_total' => $discountTotal,
+            'total' => $grandTotal,
             'currency' => $currency,
             'delivery_address' => $checkout->delivery_address,
             'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),

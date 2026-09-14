@@ -49,6 +49,11 @@ return [
         'api_key' => env('PAYMENT_SERVICE_API_KEY'),
     ],
 
+    'promotion' => [
+        'url' => env('PROMOTION_SERVICE_URL'),
+        'api_key' => env('PROMOTION_SERVICE_API_KEY'),
+    ],
+
     'wallet' => [
         /** Must match Wallet Service ORDER_SERVICE_API_KEY (sent as x-service-key). */
         'api_key' => env('WALLET_SERVICE_API_KEY'),

@@ -27,6 +27,8 @@ class CheckoutSession extends Model
         'status_id',
         'total',
         'shipping_total',
+        'promotion_discount_total',
+        'promotion_snapshot',
         'failure_reason',
         'idempotency_key',
         'user_id',
@@ -43,6 +45,7 @@ class CheckoutSession extends Model
         'status_id' => OrderStatus::class,
         'expire_at' => 'datetime',
         'delivery_address' => 'array',
+        'promotion_snapshot' => 'array',
         'address_updated_at' => 'datetime',
     ];
 

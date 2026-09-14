@@ -50,6 +50,7 @@ class ConsumeProductValidated extends BaseConsumer
 
         $checkoutService = app(CheckoutService::class);
         $paymentService  = app(PaymentService::class);
+        $promotionQuoteService = app(\App\Services\PromotionQuoteService::class);
 
         $checkout = $checkoutService->validateCheckout($checkoutId);
         if (!$checkout) {
@@ -80,6 +81,45 @@ class ConsumeProductValidated extends BaseConsumer
                 'reason'      => 'INVALID_RESERVATION_ID',
             ]);
             throw new \RuntimeException('Invalid reservation_id');
+        }
+
+        try {
+            $subtotal = (float) ($data['subtotal'] ?? $total);
+            $snapshot = is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [];
+            $promoCode = isset($snapshot['promo_code']) && is_string($snapshot['promo_code'])
+                ? $snapshot['promo_code']
+                : null;
+            $promotionQuote = $promotionQuoteService->quote(
+                checkoutId: $checkoutId,
+                userId: (string) $checkout->user_id,
+                subtotal: $subtotal,
+                shippingTotal: (float) ($checkout->shipping_total ?? 0),
+                promoCode: $promoCode,
+            );
+            if ($promoCode !== null) {
+                $promoStatus = $promotionQuote['promo_code_status'] ?? null;
+                if ($promoStatus !== null && $promoStatus !== 'VALID') {
+                    logger()->warning('PROMO_CODE_UNAVAILABLE_AT_CONFIRM_CHECKOUT_REJECTED', [
+                        'checkout_id' => $checkoutId,
+                        'promo_code' => $promoCode,
+                        'promo_code_status' => $promoStatus,
+                        'promo_code_message' => $promotionQuote['promo_code_message'] ?? null,
+                    ]);
+                    $checkoutService->reject($checkoutId, 'PROMO_CODE_UNAVAILABLE_AT_CONFIRM');
+                    return;
+                }
+            }
+            if (!$checkoutService->applyPromotionQuote($checkoutId, $promotionQuote)) {
+                throw new \RuntimeException('Failed to persist promotion quote');
+            }
+            $total = $promotionQuote['final_total'];
+        } catch (\Throwable $e) {
+            logger()->error('PROMOTION_QUOTE_FAILED_CHECKOUT_REJECTED', [
+                'checkout_id' => $checkoutId,
+                'error' => $e->getMessage(),
+            ]);
+            $checkoutService->reject($checkoutId, 'PROMOTION_QUOTE_FAILED');
+            return;
         }
 
         $stockConfirmed = $checkoutService->markStockConfirmed($checkoutId, $total, $reservationId);

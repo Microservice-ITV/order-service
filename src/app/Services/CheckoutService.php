@@ -25,7 +25,8 @@ class CheckoutService
         private readonly CheckoutSessionInterface $checkoutSessions,
         private readonly CheckoutItemInterface $checkoutItems,
         private readonly ProductValidationAndPricingService $pricingService,
-        private readonly PaymentService $paymentService
+        private readonly PaymentService $paymentService,
+        private readonly PromotionQuoteService $promotionQuoteService
     ) {}
 
     /**
@@ -139,6 +140,22 @@ class CheckoutService
             ['from' => OrderStatus::PENDING_STOCK->name, 'to' => OrderStatus::STOCK_CONFIRMED->name],
             'debug'
         );
+    }
+
+    public function applyPromotionQuote(string $checkoutId, array $quote): bool
+    {
+        $updated = $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'total' => (float) ($quote['final_total'] ?? 0),
+                'shipping_total' => (float) ($quote['shipping_total'] ?? 0),
+                'promotion_discount_total' => (float) ($quote['discount_total'] ?? 0),
+                'promotion_snapshot' => $quote,
+                'updated_at' => now(),
+            ]
+        );
+
+        return $updated === 1;
     }
 
     public function markPendingPayment(string $checkoutId): bool
@@ -306,10 +323,15 @@ class CheckoutService
      *   reason?: string,
      *   payment_update_failed?: bool,
      *   payment_error?: string,
+    *   promotion_error?: string,
      *   status: ?string,
      *   address_updated_at: ?string,
      *   grand_total?: float,
      *   shipping_total?: float,
+    *   promotion_discount_total?: float,
+    *   promo_code?: ?string,
+    *   promo_code_status?: ?string,
+    *   promo_code_message?: ?string,
      *   client_secret?: string,
      *   shop_shippings?: list<array{shop_id: string, shipping_fee: float}>
      * }
@@ -318,7 +340,8 @@ class CheckoutService
         string $checkoutId,
         array $deliveryAddress,
         ?float $shippingTotal = null,
-        ?array $shopShippings = null
+        ?array $shopShippings = null,
+        ?string $promoCode = null,
     ): array {
         /** @var ?CheckoutSession $checkout */
         $checkout = $this->checkoutSessions->findById($checkoutId);
@@ -411,7 +434,48 @@ class CheckoutService
             }
 
             $itemsSubtotal = $this->calculateCheckoutItemsSubtotal($checkoutId);
-            $grandTotal = round($itemsSubtotal + $effectiveShipping, 2);
+            $effectivePromoCode = $this->resolvePromoCode($checkout, $promoCode);
+            try {
+                $promotionQuote = $this->promotionQuoteService->quote(
+                    checkoutId: $checkoutId,
+                    userId: (string) $checkout->user_id,
+                    subtotal: $itemsSubtotal,
+                    shippingTotal: $effectiveShipping,
+                    promoCode: $effectivePromoCode,
+                );
+            } catch (\Throwable $e) {
+                logger()->error('CHECKOUT_PROMOTION_QUOTE_UPDATE_FAILED', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $e->getMessage(),
+                ]);
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'promotion_quote_failed',
+                    'promotion_error' => $e->getMessage(),
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            if (
+                $effectivePromoCode !== null
+                && ($promotionQuote['promo_code_status'] ?? null) !== null
+                && ($promotionQuote['promo_code_status'] ?? null) !== 'VALID'
+            ) {
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'promo_code_invalid',
+                    'promo_code' => $promotionQuote['promo_code'] ?? $effectivePromoCode,
+                    'promo_code_status' => $promotionQuote['promo_code_status'],
+                    'promo_code_message' => $promotionQuote['promo_code_message'] ?? 'Promo code is not valid',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            $grandTotal = $promotionQuote['final_total'];
 
             $firstItem = CheckoutItem::query()->where('checkout_id', $checkoutId)->first();
             $currency = $firstItem && $firstItem->currency ? (string) $firstItem->currency : 'USD';
@@ -448,7 +512,8 @@ class CheckoutService
                     $grandTotal,
                     $effectiveShipping,
                     $normalizedShopShippings,
-                    $paymentResult
+                    $paymentResult,
+                    $promotionQuote
                 ): void {
                     $updated = $this->checkoutSessions->updateWhere(
                         [['id', '=', $checkoutId]],
@@ -456,6 +521,8 @@ class CheckoutService
                             'delivery_address' => $deliveryAddress,
                             'address_updated_at' => $updatedAt,
                             'shipping_total' => $effectiveShipping,
+                            'promotion_discount_total' => $promotionQuote['discount_total'],
+                            'promotion_snapshot' => $promotionQuote,
                             'total' => $grandTotal,
                             'client_secret' => $paymentResult['client_secret'],
                             'updated_at' => $updatedAt,
@@ -493,6 +560,7 @@ class CheckoutService
                 'status' => $checkout->status_id->name,
                 'grand_total' => $grandTotal,
                 'shipping_total' => $effectiveShipping,
+                'promotion_discount_total' => $promotionQuote['discount_total'],
                 'per_shop' => $normalizedShopShippings !== null,
             ]);
 
@@ -503,6 +571,10 @@ class CheckoutService
                 'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
                 'grand_total' => $grandTotal,
                 'shipping_total' => $effectiveShipping,
+                'promotion_discount_total' => (float) $promotionQuote['discount_total'],
+                'promo_code' => $promotionQuote['promo_code'] ?? null,
+                'promo_code_status' => $promotionQuote['promo_code_status'] ?? null,
+                'promo_code_message' => $promotionQuote['promo_code_message'] ?? null,
                 'client_secret' => $paymentResult['client_secret'],
                 'shop_shippings' => $normalizedShopShippings,
             ];
@@ -544,6 +616,25 @@ class CheckoutService
             'status' => $checkout->status_id->name,
             'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
         ];
+    }
+
+    private function resolvePromoCode(CheckoutSession $checkout, ?string $promoCode): ?string
+    {
+        if (is_string($promoCode)) {
+            $trimmed = strtoupper(trim($promoCode));
+            if ($trimmed !== '') {
+                return $trimmed;
+            }
+        }
+
+        $snapshot = is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [];
+        $fromSnapshot = $snapshot['promo_code'] ?? null;
+        if (is_string($fromSnapshot)) {
+            $trimmed = strtoupper(trim($fromSnapshot));
+            return $trimmed !== '' ? $trimmed : null;
+        }
+
+        return null;
     }
 
     private function calculateCheckoutItemsSubtotal(string $checkoutId): float
@@ -876,14 +967,20 @@ class CheckoutService
             0.0
         );
 
+        $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
+        $discountTotal = round((float) ($checkout->promotion_discount_total ?? 0), 2);
+        $grandTotal = round((float) ($checkout->total ?? max(0, $subtotal + $shippingTotal - $discountTotal)), 2);
+
         $payload = EventPayloadBuilder::build(EventTopic::ORDER_CHECKOUT_REQUESTED, $correlationId, [
             'order_id' => null,
             'checkout_id' => $checkout->id,
             'user_id' => (string) $checkout->user_id,
             'status' => 'CREATED',
             'items' => $eventItems,
-            'subtotal' => $subtotal,
-            'total' => (float) ($checkout->total ?? $subtotal),
+            'subtotal' => round($subtotal, 2),
+            'shipping_total' => $shippingTotal,
+            'promotion_discount_total' => $discountTotal,
+            'total' => $grandTotal,
             'currency' => $currency,
             'delivery_address' => $checkout->delivery_address,
             'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),

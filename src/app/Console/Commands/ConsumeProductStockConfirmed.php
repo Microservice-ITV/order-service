@@ -100,6 +100,19 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             ];
         })->values()->all();
 
+        $subtotal = (float) array_reduce(
+            $eventItems,
+            static fn (float $carry, array $item): float => $carry + (float) ($item['line_total'] ?? 0),
+            0.0
+        );
+        $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
+        $discountTotal = round((float) ($checkout->promotion_discount_total ?? 0), 2);
+        $grandTotal = round((float) ($checkout->total ?? max(0, $subtotal + $shippingTotal - $discountTotal)), 2);
+        $currency = 'USD';
+        if ($eventItems !== []) {
+            $currency = (string) ($eventItems[0]['currency'] ?? 'USD');
+        }
+
         $eventPayload = EventPayloadBuilder::build(EventTopic::ORDER_READY_FOR_FULFILLMENT, $correlationId, [
             'order_id' => $orderId,
             'checkout_id' => $checkoutId,
@@ -108,6 +121,11 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             'status' => 'READY_FOR_FULFILLMENT',
             'deliveryAddress' => $checkout->delivery_address,
             'items' => $eventItems,
+            'subtotal' => round($subtotal, 2),
+            'shipping_total' => $shippingTotal,
+            'promotion_discount_total' => $discountTotal,
+            'total' => $grandTotal,
+            'currency' => $currency,
             'updatedAt' => now()->utc()->toIso8601String(),
         ]);
 

@@ -46,6 +46,7 @@ class CheckoutController extends Controller
                 'shop_shippings' => ['nullable', 'array'],
                 'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
                 'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
+                'promo_code' => ['nullable', 'string', 'max:64'],
             ]));
 
             if (!array_key_exists('shipping_total', $validated)) {
@@ -54,6 +55,13 @@ class CheckoutController extends Controller
                 $shippingTotal = $validated['shipping_total'] === null ? null : (float) $validated['shipping_total'];
             }
             unset($validated['shipping_total']);
+
+            $promoCode = null;
+            if (array_key_exists('promo_code', $validated) && is_string($validated['promo_code'])) {
+                $trimmed = trim($validated['promo_code']);
+                $promoCode = $trimmed !== '' ? $trimmed : null;
+            }
+            unset($validated['promo_code']);
 
             $shopShippings = null;
             if (
@@ -75,7 +83,8 @@ class CheckoutController extends Controller
                 checkoutId: $checkoutId,
                 deliveryAddress: $validated,
                 shippingTotal: $shippingTotal,
-                shopShippings: $shopShippings
+                shopShippings: $shopShippings,
+                promoCode: $promoCode,
             );
 
             if ($result['not_found'] === true) {
@@ -102,6 +111,12 @@ class CheckoutController extends Controller
                     'unknown_shop_in_shipping' => 'shop_shippings contains a shop_id that is not in this checkout',
                     'checkout_items_missing_shop_id' => 'Cart line items must include shop_id to use per-shop shipping',
                     'shop_shippings_invalid' => 'shop_shippings could not be applied (empty or invalid shop ids)',
+                    'promotion_quote_failed' => 'Promotion pricing is temporarily unavailable; please try again',
+                    'promo_code_invalid' => match ($result['promo_code_status'] ?? null) {
+                        'LIMIT_REACHED' => $result['promo_code_message'] ?? 'Promo code has reached its usage limit',
+                        'NOT_APPLICABLE' => $result['promo_code_message'] ?? 'Promo code does not apply to the current cart',
+                        default => $result['promo_code_message'] ?? 'Promo code is not valid',
+                    },
                     default => 'Delivery address cannot be updated in current state',
                 };
 
@@ -112,6 +127,11 @@ class CheckoutController extends Controller
                 ];
                 if (!empty($result['shop_validation']) && is_array($result['shop_validation'])) {
                     $payload['shop_validation'] = $result['shop_validation'];
+                }
+                if (!empty($result['promo_code_status'])) {
+                    $payload['promo_code'] = $result['promo_code'] ?? null;
+                    $payload['promo_code_status'] = $result['promo_code_status'];
+                    $payload['promo_code_message'] = $result['promo_code_message'] ?? null;
                 }
 
                 return response()->json($payload, 409);
@@ -130,6 +150,14 @@ class CheckoutController extends Controller
             if (isset($result['grand_total'], $result['shipping_total'])) {
                 $payload['grand_total'] = $result['grand_total'];
                 $payload['shipping_total'] = $result['shipping_total'];
+                $payload['promotion_discount_total'] = $result['promotion_discount_total'] ?? 0;
+                if (!empty($result['promo_code'])) {
+                    $payload['promo_code'] = $result['promo_code'];
+                }
+                if (!empty($result['promo_code_status'])) {
+                    $payload['promo_code_status'] = $result['promo_code_status'];
+                    $payload['promo_code_message'] = $result['promo_code_message'] ?? null;
+                }
                 if (!empty($result['client_secret'])) {
                     $payload['payment'] = [
                         'client_secret' => $result['client_secret'],
