@@ -21,7 +21,8 @@ final class PaymentService
         string $reservationId,
         float $amount,
         string $correlationId,
-        ?string $expireAtIso
+        ?string $expireAtIso,
+        ?string $paymentMethod = null
     ): array {
         $baseUrl = rtrim((string) config('services.payment.url'), '/');
 
@@ -32,6 +33,10 @@ final class PaymentService
             'correlation_id' => $correlationId,
             'expire_at'      => $expireAtIso,
         ];
+
+        if ($paymentMethod !== null && $paymentMethod !== '') {
+            $payload['payment_method'] = $paymentMethod;
+        }
 
         logger()->info('PAYMENT_INTENT_REQUEST', [
             'url' => $baseUrl . '/api/v1/payments/intents',
@@ -143,6 +148,113 @@ final class PaymentService
             'client_secret' => $data['clientSecret'],
             'amount' => (float) ($data['amount'] ?? $amount),
             'expires_at' => isset($data['expiresAt']) ? (string) $data['expiresAt'] : null,
+        ];
+    }
+
+    /**
+     * Authorise a COD payment after address/shipping are finalised.
+     * Publishes payment.completed so the saga can create the order.
+     *
+     * POST /api/v1/payments/{payment_id}/authorize
+     */
+    public function authorizePayment(string $paymentId): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+
+        logger()->info('PAYMENT_COD_AUTHORIZE_REQUEST', [
+            'url' => $baseUrl . '/api/v1/payments/' . $paymentId . '/authorize',
+        ]);
+
+        /** @var \Illuminate\Http\Client\Response $response */
+        $response = Http::timeout(15)
+            ->withHeaders([
+                'Content-Type'  => 'application/json',
+                'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+            ])
+            ->post($baseUrl . '/api/v1/payments/' . rawurlencode($paymentId) . '/authorize');
+
+        if (!$response->successful()) {
+            $body = $response->json();
+            $err = is_array($body) && isset($body['error']['message'])
+                ? (string) $body['error']['message']
+                : $response->body();
+
+            logger()->warning('PAYMENT_COD_AUTHORIZE_FAILED', [
+                'status' => $response->status(),
+                'payment_id' => $paymentId,
+                'error' => $err,
+            ]);
+
+            throw new \RuntimeException('Failed to authorise COD payment: ' . $err);
+        }
+
+        $responseData = $response->json();
+        $data = is_array($responseData) ? ($responseData['data'] ?? null) : null;
+
+        if (!is_array($data) || empty($data['paymentId'])) {
+            logger()->error('PAYMENT_COD_AUTHORIZE_INVALID_RESPONSE', [
+                'body' => $responseData,
+            ]);
+            throw new \RuntimeException('Invalid COD authorize response');
+        }
+
+        return [
+            'payment_id' => $data['paymentId'],
+            'status' => $data['status'] ?? null,
+            'previously_authorized' => (bool) ($data['previouslyAuthorized'] ?? false),
+        ];
+    }
+
+    /**
+     * Confirm physical collection of a COD payment after delivery handover.
+     *
+     * POST /api/v1/payments/{payment_id}/collect
+     */
+    public function collectPayment(string $paymentId): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+
+        logger()->info('PAYMENT_COD_COLLECT_REQUEST', [
+            'url' => $baseUrl . '/api/v1/payments/' . $paymentId . '/collect',
+        ]);
+
+        /** @var \Illuminate\Http\Client\Response $response */
+        $response = Http::timeout(15)
+            ->withHeaders([
+                'Content-Type'  => 'application/json',
+                'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+            ])
+            ->post($baseUrl . '/api/v1/payments/' . rawurlencode($paymentId) . '/collect');
+
+        if (!$response->successful()) {
+            $body = $response->json();
+            $err = is_array($body) && isset($body['error']['message'])
+                ? (string) $body['error']['message']
+                : $response->body();
+
+            logger()->warning('PAYMENT_COD_COLLECT_FAILED', [
+                'status' => $response->status(),
+                'payment_id' => $paymentId,
+                'error' => $err,
+            ]);
+
+            throw new \RuntimeException('Failed to collect COD payment: ' . $err);
+        }
+
+        $responseData = $response->json();
+        $data = is_array($responseData) ? ($responseData['data'] ?? null) : null;
+
+        if (!is_array($data) || empty($data['paymentId'])) {
+            logger()->error('PAYMENT_COD_COLLECT_INVALID_RESPONSE', [
+                'body' => $responseData,
+            ]);
+            throw new \RuntimeException('Invalid COD collect response');
+        }
+
+        return [
+            'payment_id' => $data['paymentId'],
+            'status' => $data['status'] ?? null,
+            'previously_collected' => (bool) ($data['previouslyCollected'] ?? false),
         ];
     }
 }

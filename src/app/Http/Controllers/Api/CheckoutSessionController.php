@@ -28,6 +28,7 @@ class CheckoutSessionController extends Controller
         return response()->json([
             'checkout_id' => $checkout->id,
             'status'      => $checkout->status_id->name,
+            'payment_method' => $checkout->payment_method ?? 'card',
             'payment'     => $checkout->payment_id ? [
                 'payment_id'    => $checkout->payment_id,
                 'client_secret' => $checkout->client_secret,
