@@ -54,3 +54,10 @@ OK, I don't want to change status to collected automatically. Here, the flow wil
   I'll map the current COD payment status flow, where orderId should be set on payments, and the confirm-receipt path
   so we can keep payments PENDING, stop auto-collect, and move orders from shipped → delivered.
 
+
+Great job, Can you check the Kernel.php and ConsumeAll class in order srvice. It takes time in ordering process while checking stock reservation, payment completed, sotck confirmed and shipment delivered. Can you check CheckoutSummary component also in forntent-react service while taking time in ordering process?
+[•] Trace ordering-state flow across order-service consumers, publishers, and checkout polling
+[ ] Identify and fix consumer-side latency or blocking behavior
+[ ] Identify and fix CheckoutSummary/frontend waiting behavior
+[ ] Run focused backend and frontend verification
+
