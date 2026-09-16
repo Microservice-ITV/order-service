@@ -6,6 +6,23 @@ use Illuminate\Support\Facades\Http;
 
 final class PaymentService
 {
+    /** @return array<int, array<string, mixed>> */
+    public function getPaymentsForOrders(array $orderIds): array
+    {
+        $ids = array_values(array_filter($orderIds, static fn ($id) => is_string($id) && $id !== ''));
+        if ($ids === []) return [];
+
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+        $response = Http::timeout(15)->withHeaders([
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->get($baseUrl . '/api/v1/payments', ['order_ids' => implode(',', $ids)]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Failed to load payment records');
+        }
+
+        return (array) ($response->json('data') ?? []);
+    }
     /**
      * Create a payment intent in the payment service.
      *
@@ -205,6 +222,24 @@ final class PaymentService
         ];
     }
 
+    /** Bind the payment created for a checkout to its newly created order. */
+    public function attachOrder(string $paymentId, string $orderId): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+        $response = Http::timeout(15)->retry(2, 200)->withHeaders([
+            'Content-Type' => 'application/json',
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->patch($baseUrl . '/api/v1/payments/' . rawurlencode($paymentId) . '/order', [
+            'orderId' => $orderId,
+        ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Failed to attach order to payment: ' . $response->body());
+        }
+
+        return (array) ($response->json('data') ?? []);
+    }
+
     /**
      * Confirm physical collection of a COD payment after delivery handover.
      *
@@ -258,4 +293,3 @@ final class PaymentService
         ];
     }
 }
-

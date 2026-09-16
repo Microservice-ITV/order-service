@@ -3,22 +3,19 @@
 namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
+use App\Enums\OrderStatus;
 use App\Logging\LogMessage;
-use App\Models\CheckoutSession;
 use App\Models\Order;
-use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
-use Throwable;
 
 /**
- * Deliveries confirm COD collection: when a shipment is marked delivered
- * (shipment.delivered), notify the payment service so the pending COD payment
- * is settled (payment.collected). Ignored for non-COD orders.
+ * Delivery confirmation marks the order DELIVERED. COD collection remains a
+ * separate shop-owner action and must never be triggered automatically.
  */
 class ConsumeShipmentDelivered extends BaseConsumer
 {
     protected $signature = 'consume:shipment-delivered';
-    protected $description = 'Consume shipment.delivered events and settle COD payments';
+    protected $description = 'Consume shipment.delivered events and mark orders delivered';
 
     protected function eventName(): string
     {
@@ -60,39 +57,13 @@ class ConsumeShipmentDelivered extends BaseConsumer
             return;
         }
 
-        $checkout = CheckoutSession::query()->find($order->checkout_id);
-        if (!$checkout || ($checkout->payment_method ?? 'card') !== 'cod') {
-            logger()->info('SHIPMENT_DELIVERED_NON_COD_IGNORED', [
-                'order_id'   => $order->order_id,
-                'checkout_id' => $order->checkout_id,
-            ]);
-            return;
+        if ($order->status_id !== OrderStatus::DELIVERED->value) {
+            $order->update(['status_id' => OrderStatus::DELIVERED->value]);
         }
 
-        $paymentId = $order->payment_id;
-        if (!$paymentId || $paymentId === '') {
-            logger()->warning('SHIPMENT_DELIVERED_MISSING_PAYMENT_ID', [
-                'order_id' => $order->order_id,
-            ]);
-            return;
-        }
-
-        try {
-            $paymentService = app(PaymentService::class);
-            $result = $paymentService->collectPayment($paymentId);
-
-            logger()->info('PAYMENT_COD_COLLECTED_FROM_DELIVERY', [
-                'order_id'   => $order->order_id,
-                'payment_id' => $paymentId,
-                'status'     => $result['status'] ?? null,
-            ]);
-        } catch (Throwable $e) {
-            logger()->error('PAYMENT_COD_COLLECT_FAILED_FROM_DELIVERY', [
-                'order_id'   => $order->order_id,
-                'payment_id' => $paymentId,
-                'error'      => $e->getMessage(),
-            ]);
-            throw $e;
-        }
+        logger()->info('ORDER_MARKED_DELIVERED_FROM_SHIPMENT', [
+            'order_id' => $order->order_id,
+            'payment_id' => $order->payment_id,
+        ]);
     }
 }
