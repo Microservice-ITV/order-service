@@ -23,6 +23,24 @@ final class PaymentService
 
         return (array) ($response->json('data') ?? []);
     }
+
+    /** @return array<string, mixed> */
+    public function getPaymentDetail(string $paymentId): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+        $response = Http::timeout(15)->withHeaders([
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->get($baseUrl . '/api/v1/payments/' . rawurlencode($paymentId));
+
+        if (!$response->successful()) {
+            if ($response->status() === 404) {
+                throw new \RuntimeException('payment_not_found');
+            }
+            throw new \RuntimeException('Failed to load payment detail');
+        }
+
+        return (array) ($response->json('data') ?? []);
+    }
     /**
      * Create a payment intent in the payment service.
      *
