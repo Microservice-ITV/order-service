@@ -10,6 +10,7 @@ use App\Logging\LogMessage;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
 use App\Services\OrderService;
+use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
@@ -80,7 +81,11 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 return;
             }
 
-            if (in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
+            $existingOrder = \App\Models\Order::query()->where('checkout_id', $checkoutId)->first();
+            if ($existingOrder || in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
+                if ($paymentId && $existingOrder) {
+                    app(PaymentService::class)->attachOrder($paymentId, $existingOrder->order_id);
+                }
                 logger()->info(LogMessage::PAYMENT_COMPLETED_ALREADY_PROCESSED, [
                     'checkout_id' => $checkoutId,
                     'payment_id'  => $paymentId,
@@ -147,6 +152,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
             if (!isset($order)) {
                 // Checkout already processed — safe to ignore
                 return;
+            }
+
+            if ($paymentId) {
+                app(PaymentService::class)->attachOrder($paymentId, $order->order_id);
             }
 
             // Advance the saga tracker: payment processing succeeded.

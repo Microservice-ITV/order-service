@@ -13,7 +13,7 @@ use Throwable;
 class ConsumeAll extends Command
 {
     protected $signature = 'consume:all';
-    protected $description = 'Run all RabbitMQ consumers on a single connection (1 conn, 5 channels)';
+    protected $description = 'Run all RabbitMQ consumers on a single connection (1 conn, 6 channels)';
 
     private array $consumers = [];
     private array $queues = [];
@@ -51,6 +51,11 @@ class ConsumeAll extends Command
                 'queue' => config('rabbitmq.queues.payment_failed'),
                 'routing_keys' => ['payment.failed'],
                 'handler' => ConsumePaymentFailed::class,
+            ],
+            'consume:shipment-delivered' => [
+                'queue' => config('rabbitmq.queues.shipment_delivered'),
+                'routing_keys' => ['shipment.delivered'],
+                'handler' => ConsumeShipmentDelivered::class,
             ],
         ];
 
@@ -151,8 +156,11 @@ class ConsumeAll extends Command
             while (true) {
                 foreach ($channels as $name => $ch) {
                     try {
-                        // Wait up to 5 seconds for activity on the channel to reduce noisy timeouts
-                        $ch->wait(null, false, 5);
+                        // Channels are checked sequentially. A long timeout here adds up across
+                        // all six channels and can delay a message by almost 30 seconds when the
+                        // preceding queues are idle. Keep the slice short so every queue is
+                        // serviced promptly while retaining a single shared connection.
+                        $ch->wait(null, false, 0.1);
                     } catch (AMQPConnectionClosedException $e) {
                         $this->error("Connection lost on {$name}: {$e->getMessage()}");
                         throw $e;
@@ -166,7 +174,7 @@ class ConsumeAll extends Command
                         $msg = $e->getMessage();
                         if (stripos($msg, 'timed out') !== false || stripos($msg, 'awaiting incoming data') !== false) {
                             // log at debug level if available, otherwise as a comment
-                            $this->comment("Transient channel timeout on {$name}: {$msg}");
+                            // This is expected when the channel has no message in this slice.
                             continue;
                         }
 

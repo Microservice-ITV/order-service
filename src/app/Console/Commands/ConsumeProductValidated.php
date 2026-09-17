@@ -169,7 +169,8 @@ class ConsumeProductValidated extends BaseConsumer
                 reservationId: $reservationId,
                 amount: $total,
                 correlationId: $correlationId,
-                expireAtIso: $expireAtIso
+                expireAtIso: $expireAtIso,
+                paymentMethod: $checkout->payment_method ?: 'card'
             );
         } catch (\Throwable $e) {
             logger()->error('PAYMENT_INTENT_CREATION_FAILED_STOCK_STILL_CONFIRMED', [
@@ -194,6 +195,8 @@ class ConsumeProductValidated extends BaseConsumer
         ]);
 
         $checkoutService->updatePaymentIntent($checkoutId, $paymentId, $clientSecret);
+        // Mark PENDING_PAYMENT before any COD authorize/payment.completed path
+        // so ConsumePaymentSucceeded::confirm() can transition successfully.
         $checkoutService->markPendingPayment($checkoutId);
 
         logger()->info(LogMessage::CHECKOUT_PENDING_PAYMENT, [
