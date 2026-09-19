@@ -45,19 +45,5 @@ payment_method propagation comes from the frontend request; delivery/courier con
 [✓] frontend: process COD sessionPaymentMethod from status response
 [✓] docker-compose: RABBITMQ_PAYMENT_COLLECTED_KEY env
 
-OK, I don't want to change status to collected automatically. Here, the flow will be like this. As long as            
-  order successfull, payment status will be 'pending', the shop owner will update to 'collected' when the               
-  delivery status is 'delivered'. Another one is orderId are empty is the payment table, can you fix that issue.        
-  And also, you updated the delivery status 'shiped' to 'delivered'(need to modify order_status table) in the           
-  orders table when the user click 'confirm receipt'.                                                                   
-                                                    
-  I'll map the current COD payment status flow, where orderId should be set on payments, and the confirm-receipt path
-  so we can keep payments PENDING, stop auto-collect, and move orders from shipped → delivered.
-
-
-Great job, Can you check the Kernel.php and ConsumeAll class in order srvice. It takes time in ordering process while checking stock reservation, payment completed, sotck confirmed and shipment delivered. Can you check CheckoutSummary component also in forntent-react service while taking time in ordering process?
-[•] Trace ordering-state flow across order-service consumers, publishers, and checkout polling
-[ ] Identify and fix consumer-side latency or blocking behavior
-[ ] Identify and fix CheckoutSummary/frontend waiting behavior
-[ ] Run focused backend and frontend verification
+Hey, I want you to modify the payment processing flow. I already modified the payments methods to "prepaid and cod". For COD part, all fine. I want to store "Prepaid" as payment method what ever you choose (card, kpay, wavepay, etc..).Now we are storing only "card". In that case, provider will be stripe or kpay what ever you choose. The final goal to store the acutal payment method(cod, prepaid) name in the database. All operation are working well and make sure payment process working gracefully after you modified. You need to tocuh CheckoutPage and CheckoutPayment in frontend-react.
 

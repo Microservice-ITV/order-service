@@ -34,7 +34,7 @@ class SagaCheckoutController extends Controller
                 'user_id' => 'required|string',
                 'delivery_address' => 'nullable|array',
                 'idempotency_key' => 'required|string',
-                'payment_method' => 'nullable|string|in:card,cod',
+                'payment_method' => 'nullable|string|in:prepaid,cod',
             ]);
 
             $result = $this->sagaCheckoutService->startSagaCheckout(
@@ -42,7 +42,7 @@ class SagaCheckoutController extends Controller
                 $request->input('user_id'),
                 $request->input('idempotency_key'),
                 $request->input('delivery_address'),
-                (string) ($request->input('payment_method') ?? 'card')
+                (string) ($request->input('payment_method') ?? 'prepaid')
             );
 
             return response()->json([

@@ -660,7 +660,7 @@ class CheckoutService
      */
     private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout): void
     {
-        if (($checkout->payment_method ?? 'card') !== 'cod') {
+        if (($checkout->payment_method ?? 'prepaid') !== 'cod') {
             return;
         }
 
@@ -865,7 +865,7 @@ class CheckoutService
      *
      * @throws BusinessException
      */
-    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'card'): array
+    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'prepaid'): array
     {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -921,7 +921,7 @@ class CheckoutService
         string $userId,
         string $idempotencyHash,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'card'
+        string $paymentMethod = 'prepaid'
     ): CheckoutSession
     {
         return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod) {
