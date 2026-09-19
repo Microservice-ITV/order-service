@@ -170,7 +170,7 @@ class ConsumeProductValidated extends BaseConsumer
                 amount: $total,
                 correlationId: $correlationId,
                 expireAtIso: $expireAtIso,
-                paymentMethod: $checkout->payment_method ?: 'card'
+                paymentMethod: $checkout->payment_method ?: 'prepaid'
             );
         } catch (\Throwable $e) {
             logger()->error('PAYMENT_INTENT_CREATION_FAILED_STOCK_STILL_CONFIRMED', [

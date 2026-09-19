@@ -9,7 +9,7 @@ return new class extends Migration {
     {
         Schema::table('checkout_sessions', function (Blueprint $table) {
             if (!Schema::hasColumn('checkout_sessions', 'payment_method')) {
-                $table->string('payment_method', 32)->nullable()->default('card')->after('payment_id');
+                $table->string('payment_method', 32)->nullable()->default('prepaid')->after('payment_id');
             }
         });
     }
