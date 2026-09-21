@@ -48,7 +48,7 @@ class SagaCheckoutService
     /**
      * Start checkout with saga orchestration
      */
-    public function startSagaCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null): array
+    public function startSagaCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'prepaid'): array
     {
         try {
             // Create checkout session first
@@ -56,7 +56,8 @@ class SagaCheckoutService
                 $items,
                 $userId,
                 $rawIdempotencyKey,
-                $deliveryAddress
+                $deliveryAddress,
+                $paymentMethod
             );
 
             if ($checkoutResult['existing']) {

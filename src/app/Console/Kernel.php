@@ -15,18 +15,18 @@ use App\Console\Commands\PublishOutboxPending;
 class Kernel extends ConsoleKernel
 {
     protected $commands = [
-        ConsumeProductValidated::class,
-        ConsumeProductRejected::class,
-        ConsumeProductStockConfirmed::class,
-        ConsumePaymentSucceeded::class,
-        ConsumePaymentFailed::class,
+        // ConsumeProductValidated::class,
+        // ConsumeProductRejected::class,
+        // ConsumeProductStockConfirmed::class,
+        // ConsumePaymentSucceeded::class,
+        // ConsumePaymentFailed::class,
         ConsumeAll::class,
         PublishOutboxPending::class,
     ];
 
     protected function schedule(Schedule $schedule): void
     {
-        $schedule->command('outbox:publish --limit=200')->everyMinute();
+        $schedule->command('outbox:publish --limit=200')->everySecond();
     }
 
     protected function commands(): void

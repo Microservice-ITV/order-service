@@ -59,12 +59,12 @@ class SagaOrchestrator
         $saga->start();
 
         // Publish saga start event
-        $this->eventPublisher->publish(EventTopic::SAGA_ORDER_CREATED, [
-            'saga_id' => $sagaId,
-            'type' => $type,
-            'data' => $data,
-            'timestamp' => now()->toISOString(),
-        ]);
+        // $this->eventPublisher->publish(EventTopic::SAGA_ORDER_CREATED, [
+        //     'saga_id' => $sagaId,
+        //     'type' => $type,
+        //     'data' => $data,
+        //     'timestamp' => now()->toISOString(),
+        // ]);
 
         Log::info('Saga started', [
             'saga_id' => $sagaId,
