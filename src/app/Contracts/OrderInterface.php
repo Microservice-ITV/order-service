@@ -8,6 +8,8 @@ interface OrderInterface extends BaseInterface
 {
     public function createOrder(array $attributes): Order;
 
+    public function findByOrderId(string $orderId): ?Order;
+
     public function findByCheckoutId(string $checkoutId): ?Order;
 
     public function updateByCheckoutId(string $checkoutId, array $data): int;

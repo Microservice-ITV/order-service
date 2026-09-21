@@ -22,6 +22,16 @@ final class CheckoutSessionRepository extends BaseRepository implements Checkout
         return $checkout;
     }
 
+    public function findWithItemsById(string $checkoutId): ?CheckoutSession
+    {
+        /** @var ?CheckoutSession $checkout */
+        $checkout = $this->model->newQuery()
+            ->with('items')
+            ->find($checkoutId);
+
+        return $checkout;
+    }
+
     public function updateWhere(array $where, array $data): int
     {
         return $this->model->newQuery()

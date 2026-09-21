@@ -20,6 +20,16 @@ final class OrderRepository extends BaseRepository implements OrderInterface
         return $order;
     }
 
+    public function findByOrderId(string $orderId): ?Order
+    {
+        /** @var Order|null $order */
+        $order = $this->model->newQuery()
+            ->where('order_id', $orderId)
+            ->first();
+
+        return $order;
+    }
+
     public function findByCheckoutId(string $checkoutId): ?Order
     {
         /** @var Order|null $order */

@@ -194,6 +194,15 @@ class ConsumePaymentSucceeded extends BaseConsumer
              * (the in-memory model may have been loaded before Place Order updated it).
              */
             $checkout = $checkoutService->findById($checkoutId) ?? $checkout;
+            $checkout->loadMissing('items');
+            $lineItems = $checkout->items->map(static function ($item): array {
+                return [
+                    'name' => (string) ($item->product_title ?? 'Order item'),
+                    'quantity' => (int) $item->qty,
+                    'unitPrice' => number_format((float) $item->price, 2, '.', ''),
+                    'total' => number_format((float) $item->line_total, 2, '.', ''),
+                ];
+            })->values()->all();
             $promotionSnapshot = is_array($checkout->promotion_snapshot)
                 ? $checkout->promotion_snapshot
                 : [];
@@ -244,6 +253,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'items'          => $items,
                 'reservation_id' => $order->reservation_id,
                 'deliveryAddress' => $checkout->delivery_address,
+                'line_items' => $lineItems,
                 'expire_at'      => $checkout->getExpireAtIso(),
                 'updatedAt'      => is_string($sourceUpdatedAt) && $sourceUpdatedAt !== ''
                     ? $sourceUpdatedAt
