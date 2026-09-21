@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CheckoutSessionController;
 use App\Http\Controllers\Api\CreateShipmentController;
+use App\Http\Controllers\Api\Internal\InvoiceSnapshotController;
 use App\Http\Controllers\Api\SagaCheckoutController;
 use App\Http\Controllers\Api\Internal\WalletSplitController;
 use App\Http\Controllers\Api\WebhookController;
@@ -12,6 +13,8 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('wallet.internal')->prefix('internal/orders')->group(function () {
     Route::get('{orderId}/wallet-split', [WalletSplitController::class, 'show'])
         ->name('internal.orders.wallet-split');
+    Route::get('{orderId}/invoice-snapshot', [InvoiceSnapshotController::class, 'show'])
+        ->name('internal.orders.invoice-snapshot');
 });
 
 // Order Management Routes (auth handled by auth-service / API gateway if needed)
