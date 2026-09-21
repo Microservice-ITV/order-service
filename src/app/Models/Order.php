@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Order represents a confirmed order (new "orders" table).
@@ -37,6 +38,11 @@ class Order extends Model
     public function checkoutSession(): BelongsTo
     {
         return $this->belongsTo(CheckoutSession::class, 'checkout_id');
+    }
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(OrderItem::class, 'order_id', 'order_id');
     }
 
     public function status(): BelongsTo

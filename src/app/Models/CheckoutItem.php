@@ -12,9 +12,13 @@ class CheckoutItem extends Model
 {
     protected $table = 'checkout_items';
 
+    public $incrementing = false;
+    protected $keyType = 'string';
+
     public $timestamps = false;
     
     protected $fillable = [
+        'id',
         'checkout_id',
         'product_id',
         'variant_id',
