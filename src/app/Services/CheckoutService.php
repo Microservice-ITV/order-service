@@ -583,6 +583,24 @@ class CheckoutService
                 $result['already_succeeded'] = true;
             }
 
+            try {
+                $this->authorizeCodPaymentIfNeeded($checkout);
+            } catch (\RuntimeException $e) {
+                logger()->error('CHECKOUT_COD_AUTHORIZE_FAILED', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'not_found' => false,
+                    'invalid_state' => false,
+                    'payment_update_failed' => true,
+                    'payment_error' => $e->getMessage(),
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => $result['address_updated_at'],
+                ];
+            }
+
             return $result;
         }
 
@@ -610,12 +628,53 @@ class CheckoutService
             'status' => $checkout->status_id->name,
         ]);
 
+        try {
+            $this->authorizeCodPaymentIfNeeded($checkout);
+        } catch (\RuntimeException $e) {
+            logger()->error('CHECKOUT_COD_AUTHORIZE_FAILED', [
+                'checkout_id' => $checkoutId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'not_found' => false,
+                'invalid_state' => false,
+                'payment_update_failed' => true,
+                'payment_error' => $e->getMessage(),
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
+            ];
+        }
+
         return [
             'not_found' => false,
             'invalid_state' => false,
             'status' => $checkout->status_id->name,
             'address_updated_at' => $updatedAt->copy()->utc()->toIso8601String(),
         ];
+    }
+
+    /**
+     * For COD checkouts, publish payment.completed only after address/shipping
+     * are applied so the saga does not create the order with a stale total.
+     */
+    private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout): void
+    {
+        if (($checkout->payment_method ?? 'prepaid') !== 'cod') {
+            return;
+        }
+
+        $paymentId = $checkout->payment_id;
+        if ($paymentId === null || $paymentId === '') {
+            throw new \RuntimeException('COD payment is not ready for authorisation');
+        }
+
+        $this->paymentService->authorizePayment($paymentId);
+
+        logger()->info('CHECKOUT_COD_AUTHORISED', [
+            'checkout_id' => $checkout->id,
+            'payment_id' => $paymentId,
+        ]);
     }
 
     private function resolvePromoCode(CheckoutSession $checkout, ?string $promoCode): ?string
@@ -806,7 +865,7 @@ class CheckoutService
      *
      * @throws BusinessException
      */
-    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null): array
+    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'prepaid'): array
     {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -837,7 +896,8 @@ class CheckoutService
                 validatedItems: $validationData['items'],
                 userId: $userId,
                 idempotencyHash: $idempotencyHash,
-                deliveryAddress: $deliveryAddress
+                deliveryAddress: $deliveryAddress,
+                paymentMethod: $paymentMethod
             );
         } catch (QueryException $e) {
             $errorCode = (int) ($e->errorInfo[1] ?? 0);
@@ -860,10 +920,11 @@ class CheckoutService
         array $validatedItems,
         string $userId,
         string $idempotencyHash,
-        ?array $deliveryAddress = null
+        ?array $deliveryAddress = null,
+        string $paymentMethod = 'prepaid'
     ): CheckoutSession
     {
-        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress) {
+        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod) {
             $now = now();
 
             if (count($items) !== count($validatedItems)) {
@@ -876,6 +937,7 @@ class CheckoutService
                 'user_id'         => $userId,
                 'reservation_id'  => null,
                 'payment_id'      => null,
+                'payment_method'  => $paymentMethod,
                 'correlation_id'  => $idempotencyHash,
                 'expire_at'       => $this->calculateExpireAt(),
                 'delivery_address' => $deliveryAddress,
@@ -908,6 +970,7 @@ class CheckoutService
                     : null;
 
                 $rows[] = [
+                    'id' => (string) Str::uuid(),
                     'checkout_id' => $checkoutSession->id,
                     'product_id' => $productId,
                     'variant_id' => $variantId,

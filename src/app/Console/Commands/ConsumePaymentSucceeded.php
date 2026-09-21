@@ -7,9 +7,11 @@ use App\Enums\OrderStatus;
 use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Logging\LogMessage;
+use App\Models\CheckoutItem;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
 use App\Services\OrderService;
+use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
@@ -80,7 +82,11 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 return;
             }
 
-            if (in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
+            $existingOrder = \App\Models\Order::query()->where('checkout_id', $checkoutId)->first();
+            if ($existingOrder || in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
+                if ($paymentId && $existingOrder) {
+                    app(PaymentService::class)->attachOrder($paymentId, $existingOrder->order_id);
+                }
                 logger()->info(LogMessage::PAYMENT_COMPLETED_ALREADY_PROCESSED, [
                     'checkout_id' => $checkoutId,
                     'payment_id'  => $paymentId,
@@ -106,6 +112,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 $correlationId,
                 $checkoutService,
                 $orderService,
+                $checkout,
                 &$order
             ) {
                 /**
@@ -132,6 +139,12 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 );
 
                 /**
+                 * Snapshot checkout line items into order_items so the order
+                 * carries its own per-product records (same transaction).
+                 */
+                $orderService->snapshotCheckoutItems($checkout, $order);
+
+                /**
                  * Attach payment (optional, idempotent)
                  */
                 if ($paymentId) {
@@ -147,6 +160,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
             if (!isset($order)) {
                 // Checkout already processed — safe to ignore
                 return;
+            }
+
+            if ($paymentId) {
+                app(PaymentService::class)->attachOrder($paymentId, $order->order_id);
             }
 
             // Advance the saga tracker: payment processing succeeded.
@@ -190,6 +207,39 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 ? $checkout->promotion_snapshot
                 : [];
 
+            /**
+             * Line items are forwarded so downstream projections (e.g.
+             * ecommerce-read-service order_reads) can store per-product
+             * records for the order. Mirrors the order_items snapshot.
+             */
+            $items = $checkout->items
+                ->map(function (CheckoutItem $item): array {
+                    $unitPrice = (float) ($item->price ?? 0);
+                    $lineTotal = (float) ($item->line_total ?? $unitPrice * (int) ($item->qty ?? 0));
+
+                    return [
+                        'productId'      => (string) $item->product_id,
+                        'variantId'      => $item->variant_id !== null && $item->variant_id !== ''
+                            ? (string) $item->variant_id
+                            : null,
+                        'sku'            => $item->product_sku ?? '',
+                        'slug'           => $item->product_slug ?? '',
+                        'name'           => $item->product_title ?? '',
+                        'description'    => $item->product_description ?? '',
+                        'imageUrl'       => $item->image_url ?? '',
+                        'quantity'       => (int) ($item->qty ?? 0),
+                        'unitPrice'      => $unitPrice,
+                        'lineTotal'      => $lineTotal,
+                        'currency'       => $item->currency ?? 'USD',
+                        'shopId'         => $item->shop_id !== null ? (string) $item->shop_id : null,
+                        'categoryId'     => $item->category_id !== null ? (string) $item->category_id : null,
+                        'availableStock' => (int) ($item->available_stock ?? 0),
+                    ];
+                })
+                ->values()
+                ->all();
+            $subtotal = (float) array_sum(array_column($items, 'lineTotal'));
+
             $payload = EventPayloadBuilder::build(EventTopic::ORDER_PAID, $correlationId, [
                 'order_id'       => $order->order_id,
                 'checkout_id'    => $checkoutId,
@@ -199,6 +249,8 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'transaction_id' => $transactionId,
                 'amount'         => $amount,
                 'currency'       => $currency ?? 'USD',
+                'subtotal'       => $subtotal,
+                'items'          => $items,
                 'reservation_id' => $order->reservation_id,
                 'deliveryAddress' => $checkout->delivery_address,
                 'line_items' => $lineItems,

@@ -17,5 +17,7 @@ return [
         'stock_confirmed' => env('RABBITMQ_QUEUE_PRODUCT_STOCK_CONFIRMED', env('RABBITMQ_QUEUE_STOCK_CONFIRMED')),
         'payment_completed' => env('RABBITMQ_QUEUE_PAYMENT_COMPLETED'),
         'payment_failed' => env('RABBITMQ_QUEUE_PAYMENT_FAILED'),
+        'payment_collected' => env('RABBITMQ_QUEUE_PAYMENT_COLLECTED'),
+        'shipment_delivered' => env('RABBITMQ_QUEUE_SHIPMENT_DELIVERED'),
     ],
 ];
