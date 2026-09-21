@@ -970,6 +970,7 @@ class CheckoutService
                     : null;
 
                 $rows[] = [
+                    'id' => (string) Str::uuid(),
                     'checkout_id' => $checkoutSession->id,
                     'product_id' => $productId,
                     'variant_id' => $variantId,
