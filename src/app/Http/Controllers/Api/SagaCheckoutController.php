@@ -35,14 +35,31 @@ class SagaCheckoutController extends Controller
                 'delivery_address' => 'nullable|array',
                 'idempotency_key' => 'required|string',
                 'payment_method' => 'nullable|string|in:prepaid,cod',
+                // Guest checkout fields (optional)
+                'guest_id' => 'nullable|string|max:64',
             ]);
+
+            $customerMeta = null;
+            $guestId = (string) ($request->input('guest_id') ?? '');
+            if ($guestId !== '') {
+                $delivery = $request->input('delivery_address');
+                $phoneNo = is_array($delivery) && isset($delivery['phone_no']) ? (string) $delivery['phone_no'] : '';
+
+                $customerMeta = [
+                    'type' => 'GUEST',
+                    'guest_id' => $guestId,
+                    // Keep whatever user entered; CheckoutService normalizes/compares when needed.
+                    'guest_phone' => $phoneNo !== '' ? $phoneNo : null,
+                ];
+            }
 
             $result = $this->sagaCheckoutService->startSagaCheckout(
                 $request->input('items'),
-                $request->input('user_id'),
+                (string) $request->input('user_id'),
                 $request->input('idempotency_key'),
                 $request->input('delivery_address'),
-                (string) ($request->input('payment_method') ?? 'prepaid')
+                (string) ($request->input('payment_method') ?? 'prepaid'),
+                $customerMeta,
             );
 
             return response()->json([

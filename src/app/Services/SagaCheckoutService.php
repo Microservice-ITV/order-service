@@ -48,7 +48,14 @@ class SagaCheckoutService
     /**
      * Start checkout with saga orchestration
      */
-    public function startSagaCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'prepaid'): array
+    public function startSagaCheckout(
+        array $items,
+        string $userId,
+        string $rawIdempotencyKey,
+        ?array $deliveryAddress = null,
+        string $paymentMethod = 'prepaid',
+        ?array $customerMeta = null,
+    ): array
     {
         try {
             // Create checkout session first
@@ -57,7 +64,8 @@ class SagaCheckoutService
                 $userId,
                 $rawIdempotencyKey,
                 $deliveryAddress,
-                $paymentMethod
+                $paymentMethod,
+                $customerMeta,
             );
 
             if ($checkoutResult['existing']) {
@@ -81,6 +89,9 @@ class SagaCheckoutService
                     'correlation_id' => $checkout->idempotency_key,
                     'checkout_id' => $checkout->id,
                     'user_id' => $userId,
+                    'customer_type' => (string) ($customerMeta['type'] ?? 'USER'),
+                    'guest_id' => $customerMeta['guest_id'] ?? null,
+                    'guest_phone' => $customerMeta['guest_phone'] ?? null,
                     'items' => $items,
                     'delivery_address' => $deliveryAddress,
                     'created_at' => now()->toISOString(),
