@@ -865,7 +865,14 @@ class CheckoutService
      *
      * @throws BusinessException
      */
-    public function startCheckout(array $items, string $userId, string $rawIdempotencyKey, ?array $deliveryAddress = null, string $paymentMethod = 'prepaid'): array
+    public function startCheckout(
+        array $items,
+        string $userId,
+        string $rawIdempotencyKey,
+        ?array $deliveryAddress = null,
+        string $paymentMethod = 'prepaid',
+        ?array $customerMeta = null,
+    ): array
     {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -897,7 +904,8 @@ class CheckoutService
                 userId: $userId,
                 idempotencyHash: $idempotencyHash,
                 deliveryAddress: $deliveryAddress,
-                paymentMethod: $paymentMethod
+                paymentMethod: $paymentMethod,
+                customerMeta: $customerMeta,
             );
         } catch (QueryException $e) {
             $errorCode = (int) ($e->errorInfo[1] ?? 0);
@@ -921,10 +929,11 @@ class CheckoutService
         string $userId,
         string $idempotencyHash,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid'
+        string $paymentMethod = 'prepaid',
+        ?array $customerMeta = null,
     ): CheckoutSession
     {
-        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod) {
+        return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod, $customerMeta) {
             $now = now();
 
             if (count($items) !== count($validatedItems)) {
@@ -935,6 +944,9 @@ class CheckoutService
                 'idempotency_key' => $idempotencyHash,
                 'status_id'       => OrderStatus::PENDING_STOCK->value,
                 'user_id'         => $userId,
+                'customer_type'   => (string) ($customerMeta['type'] ?? 'USER'),
+                'guest_id'        => $customerMeta['guest_id'] ?? null,
+                'guest_phone'     => $customerMeta['guest_phone'] ?? null,
                 'reservation_id'  => null,
                 'payment_id'      => null,
                 'payment_method'  => $paymentMethod,
