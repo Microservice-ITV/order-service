@@ -442,6 +442,15 @@ class CheckoutService
                     subtotal: $itemsSubtotal,
                     shippingTotal: $effectiveShipping,
                     promoCode: $effectivePromoCode,
+                    shippingByShop: $normalizedShopShippings === null
+                        ? null
+                        : array_map(
+                            static fn (array $row): array => [
+                                'shop_id' => (string) $row['shop_id'],
+                                'amount' => (float) $row['shipping_fee'],
+                            ],
+                            $normalizedShopShippings,
+                        ),
                 );
             } catch (\Throwable $e) {
                 logger()->error('CHECKOUT_PROMOTION_QUOTE_UPDATE_FAILED', [
@@ -1023,7 +1032,7 @@ class CheckoutService
                 'image_url' => $item->image_url,
                 'qty' => (int) $item->qty,
                 'unit_price' => (float) $item->price,
-                'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
+                'subtotal' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
                 'currency' => $item->currency ?? 'USD',
                 'shop_id' => $item->shop_id,
                 'category_id' => $item->category_id,
@@ -1038,7 +1047,7 @@ class CheckoutService
 
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['line_total'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
+            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
             0.0
         );
 

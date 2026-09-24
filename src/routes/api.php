@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\CreateShipmentController;
 use App\Http\Controllers\Api\Internal\InvoiceSnapshotController;
 use App\Http\Controllers\Api\CollectOrderPaymentController;
 use App\Http\Controllers\Api\OrderPaymentDetailController;
+use App\Http\Controllers\Api\OrderPaymentAllocationsController;
 use App\Http\Controllers\Api\OrderPaymentRecordsController;
 use App\Http\Controllers\Api\SagaCheckoutController;
 use App\Http\Controllers\Api\Internal\WalletSplitController;
@@ -24,6 +25,7 @@ Route::middleware('wallet.internal')->prefix('internal/orders')->group(function 
 Route::controller(CheckoutController::class)->prefix('orders')->group(function () {
     Route::get('/payments', OrderPaymentRecordsController::class)->name('orders.payments');
     Route::get('/payments/{paymentId}', OrderPaymentDetailController::class)->name('orders.payment-detail');
+    Route::get('/{orderId}/payment-allocations', OrderPaymentAllocationsController::class)->name('orders.payment-allocations');
     Route::post('/checkout', 'checkout')->name('orders.checkout');
     Route::put('/checkout/{checkout_id}/address', 'updateAddress')->name('orders.checkout.address.update');
     Route::get('/checkout-sessions/{checkout_id}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');

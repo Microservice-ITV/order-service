@@ -19,7 +19,7 @@ class CollectOrderPaymentController extends Controller
         if (!$order) {
             return response()->json(['error' => 'Order not found'], 404);
         }
-        if ($order->status_id !== OrderStatus::DELIVERED->value) {
+        if ($order->order_status !== OrderStatus::DELIVERED->value) {
             return response()->json(['error' => 'COD payment can be collected only after delivery'], 409);
         }
         if (!$order->payment_id) {

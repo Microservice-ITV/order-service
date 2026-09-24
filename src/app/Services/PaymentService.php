@@ -7,15 +7,23 @@ use Illuminate\Support\Facades\Http;
 final class PaymentService
 {
     /** @return array<int, array<string, mixed>> */
-    public function getPaymentsForOrders(array $orderIds): array
+    public function getPaymentsForOrders(array $orderIds, array $shopIds = []): array
     {
         $ids = array_values(array_filter($orderIds, static fn ($id) => is_string($id) && $id !== ''));
         if ($ids === []) return [];
 
+        $query = ['order_ids' => implode(',', $ids)];
+        // When seller-scoped, payment-service aggregates the per-shop
+        // allocations down to these shops and returns them as `seller` totals.
+        $shopIds = array_values(array_filter($shopIds, static fn ($id) => is_string($id) && $id !== ''));
+        if ($shopIds !== []) {
+            $query['shop_ids'] = implode(',', $shopIds);
+        }
+
         $baseUrl = rtrim((string) config('services.payment.url'), '/');
         $response = Http::timeout(15)->withHeaders([
             'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
-        ])->get($baseUrl . '/api/v1/payments', ['order_ids' => implode(',', $ids)]);
+        ])->get($baseUrl . '/api/v1/payments/records', $query);
 
         if (!$response->successful()) {
             throw new \RuntimeException('Failed to load payment records');
@@ -40,6 +48,37 @@ final class PaymentService
         }
 
         return (array) ($response->json('data') ?? []);
+    }
+
+    /**
+     * Fetch per-shop payment allocations for a payment, optionally restricted
+     * to the given shops (seller-scoped order views).
+     *
+     * @param  string[]  $shopIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function getPaymentAllocations(string $paymentId, array $shopIds = []): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+
+        $query = ['payment_id' => $paymentId];
+        $shopIds = array_values(array_filter(
+            $shopIds,
+            static fn ($id): bool => is_string($id) && $id !== '',
+        ));
+        if ($shopIds !== []) {
+            $query['shop_ids'] = implode(',', $shopIds);
+        }
+
+        $response = Http::timeout(15)->withHeaders([
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->get($baseUrl . '/api/v1/payment-allocations', $query);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Failed to load payment allocations');
+        }
+
+        return is_array($response->json('data')) ? $response->json('data') : [];
     }
     /**
      * Create a payment intent in the payment service.
@@ -253,6 +292,24 @@ final class PaymentService
 
         if (!$response->successful()) {
             throw new \RuntimeException('Failed to attach order to payment: ' . $response->body());
+        }
+
+        return (array) ($response->json('data') ?? []);
+    }
+
+    /**
+     * Create a payment allocation for a shop_order.
+     */
+    public function createPaymentAllocation(array $data): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+        $response = Http::timeout(15)->retry(2, 200)->withHeaders([
+            'Content-Type' => 'application/json',
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->post($baseUrl . '/api/v1/payment-allocations', $data);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Failed to create payment allocation: ' . $response->body());
         }
 
         return (array) ($response->json('data') ?? []);

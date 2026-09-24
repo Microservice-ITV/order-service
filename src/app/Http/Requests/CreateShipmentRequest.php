@@ -19,6 +19,7 @@ final class CreateShipmentRequest extends FormRequest
             'courier_phone' => ['required', 'string', 'max:50'],
             'tracking_number' => ['nullable', 'string', 'max:128'],
             'tracking_url' => ['nullable', 'string', 'url', 'max:512'],
+            'shop_id' => ['nullable', 'string', 'max:64'],
         ];
     }
 }

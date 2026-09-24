@@ -203,7 +203,7 @@ class SagaCheckoutService
                 'image_url' => $item->image_url,
                 'qty' => (int) $item->qty,
                 'unit_price' => (float) $item->price,
-                'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
+                'subtotal' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
                 'currency' => $item->currency ?? 'USD',
                 'shop_id' => $item->shop_id,
                 'category_id' => $item->category_id,
@@ -218,7 +218,7 @@ class SagaCheckoutService
 
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['line_total'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
+            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
             0.0
         );
 
