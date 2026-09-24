@@ -23,7 +23,7 @@ class OrderItem extends Model
         'variant_id',
         'qty',
         'price',
-        'line_total',
+        'subtotal',
         'available_stock',
         'product_slug',
         'product_title',
@@ -31,6 +31,8 @@ class OrderItem extends Model
         'product_sku',
         'category_id',
         'shop_id',
+        'shop_order_id',
+        'discount_amount',
         'image_url',
         'currency',
     ];

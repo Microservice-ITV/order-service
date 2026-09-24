@@ -19,9 +19,16 @@ class Order extends Model
     protected $fillable = [
         'order_id',
         'checkout_id',
+        'user_id',
         'reservation_id',
         'payment_id',
-        'status_id',
+        'order_status',
+        'currency',
+        'subtotal',
+        'shipping_total',
+        'discount_total',
+        'grand_total',
+        'payment_status',
         'courier_code',
         'courier_name',
         'courier_phone',
@@ -31,8 +38,13 @@ class Order extends Model
     ];
 
     protected $casts = [
-        'status_id' => 'integer',
+        'order_status' => 'integer',
+        'user_id' => 'string',
         'shipment_created_at' => 'datetime',
+        'subtotal' => 'decimal:2',
+        'shipping_total' => 'decimal:2',
+        'discount_total' => 'decimal:2',
+        'grand_total' => 'decimal:2',
     ];
 
     public function checkoutSession(): BelongsTo
@@ -45,8 +57,8 @@ class Order extends Model
         return $this->hasMany(OrderItem::class, 'order_id', 'order_id');
     }
 
-    public function status(): BelongsTo
+    public function orderStatus(): BelongsTo
     {
-        return $this->belongsTo(OrderStatus::class, 'status_id');
+        return $this->belongsTo(OrderStatus::class, 'order_status');
     }
 }

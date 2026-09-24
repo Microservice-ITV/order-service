@@ -18,7 +18,7 @@ class OrderSeeder extends Seeder
             'checkout_id' => OrderSeedData::CHECKOUTS['success'],
             'reservation_id' => OrderSeedData::RESERVATIONS['success'],
             'payment_id' => OrderSeedData::PAYMENTS['success'],
-            'status_id' => OrderStatus::CONFIRMED->value,
+            'order_status' => OrderStatus::CONFIRMED->value,
             'created_at' => $createdAt,
             'updated_at' => $createdAt,
         ]);

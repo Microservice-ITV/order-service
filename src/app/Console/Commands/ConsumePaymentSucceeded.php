@@ -4,12 +4,14 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
-use App\Repositories\SagaRepository;
-use App\Services\EventPayloadBuilder;
 use App\Logging\LogMessage;
 use App\Models\CheckoutItem;
 use App\Models\CheckoutSession;
+use App\Models\Order;
+use App\Models\ShopOrder;
+use App\Repositories\SagaRepository;
 use App\Services\CheckoutService;
+use App\Services\EventPayloadBuilder;
 use App\Services\OrderService;
 use App\Services\PaymentService;
 use App\Services\RabbitMQ\BaseConsumer;
@@ -19,6 +21,9 @@ use Throwable;
 
 class ConsumePaymentSucceeded extends BaseConsumer
 {
+    /** Platform commission charged per shop, on that shop's own order amount. */
+    private const PLATFORM_FEE_RATE = 0.03;
+
     protected $signature = 'consume:payment-succeeded';
     protected $description = 'Consume payment succeeded events';
 
@@ -133,7 +138,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                  *  Create order (idempotent by checkout_id UNIQUE)
                  */
                 $order = $orderService->createOrder(
-                    checkoutId: $checkoutId,
+                    checkout: $checkout,
                     correlationId: $correlationId,
                     reservationId: $reservationId
                 );
@@ -154,8 +159,16 @@ class ConsumePaymentSucceeded extends BaseConsumer
                     );
                 }
 
-                $orderService->markPaid($checkoutId);
+                $orderService->markPaid($checkout);
             });
+
+            // Update payment_status on orders and shop_orders for non-COD payments
+            if (isset($order)) {
+                $isCod = ($checkout->payment_method ?? '') === 'cod';
+                if (!$isCod) {
+                    $orderService->markShopOrdersPaid($order->order_id, false);
+                }
+            }
 
             if (!isset($order)) {
                 // Checkout already processed — safe to ignore
@@ -164,6 +177,11 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
             if ($paymentId) {
                 app(PaymentService::class)->attachOrder($paymentId, $order->order_id);
+            }
+
+            // Create payment_allocations for each shop_order
+            if ($paymentId) {
+                $this->createPaymentAllocations($paymentId, $order->order_id);
             }
 
             // Advance the saga tracker: payment processing succeeded.
@@ -206,7 +224,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
             $items = $checkout->items
                 ->map(function (CheckoutItem $item): array {
                     $unitPrice = (float) ($item->price ?? 0);
-                    $lineTotal = (float) ($item->line_total ?? $unitPrice * (int) ($item->qty ?? 0));
+                    $subtotal = (float) ($item->line_total ?? $unitPrice * (int) ($item->qty ?? 0));
 
                     return [
                         'productId'      => (string) $item->product_id,
@@ -220,7 +238,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                         'imageUrl'       => $item->image_url ?? '',
                         'quantity'       => (int) ($item->qty ?? 0),
                         'unitPrice'      => $unitPrice,
-                        'lineTotal'      => $lineTotal,
+                        'subtotal'       => $subtotal,
                         'currency'       => $item->currency ?? 'USD',
                         'shopId'         => $item->shop_id !== null ? (string) $item->shop_id : null,
                         'categoryId'     => $item->category_id !== null ? (string) $item->category_id : null,
@@ -229,7 +247,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 })
                 ->values()
                 ->all();
-            $subtotal = (float) array_sum(array_column($items, 'lineTotal'));
+            $subtotal = (float) array_sum(array_column($items, 'subtotal'));
 
             $payload = EventPayloadBuilder::build(EventTopic::ORDER_PAID, $correlationId, [
                 'order_id'       => $order->order_id,
@@ -253,6 +271,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'promotion_discount_total' => (float) ($checkout->promotion_discount_total ?? 0),
                 'applied_rewards' => array_values($promotionSnapshot['applied_rewards'] ?? []),
                 'promo_code' => $promotionSnapshot['promo_code'] ?? null,
+                // Per-shop attribution so the read side can render each shop's
+                // own discount/shipping breakdown instead of re-splitting.
+                'promotion_allocations' => array_values(is_array($promotionSnapshot['allocations'] ?? null) ? $promotionSnapshot['allocations'] : []),
+                'shop_breakdown' => $orderService->shopBreakdown($order->order_id),
             ]);
             Publisher::publishStatic(EventTopic::ORDER_PAID, $payload);
 
@@ -274,6 +296,60 @@ class ConsumePaymentSucceeded extends BaseConsumer
 
             // Let BaseConsumer decide retry / requeue behavior
             throw $e;
+        }
+    }
+
+    /**
+     * Create payment_allocations for each shop_order linked to the order.
+     *
+     * Every figure is the shop's OWN amount (no scaling by the order total):
+     *  - order_amount   = shop grand_total (already nets its discount + shipping)
+     *  - discount_share = shop discount_total (informational; reflected in order_amount)
+     *  - shipping_share = shop shipping_total (buyer-paid, deducted from payout)
+     *  - platform_fee   = 3% of this shop's order_amount
+     *  - seller_amount  = order_amount - shipping_share - platform_fee
+     */
+    private function createPaymentAllocations(string $paymentId, string $orderId): void
+    {
+        $shopOrders = ShopOrder::where('order_id', $orderId)->get();
+
+        if ($shopOrders->isEmpty()) {
+            return;
+        }
+
+        // Get total payment amount from the payment service
+        $paymentDetail = app(PaymentService::class)->getPaymentDetail($paymentId);
+        $totalAmount = (float) ($paymentDetail['amount'] ?? 0);
+
+        // Σ shop grand totals must equal the captured payment (invariant kept
+        // by shop-order creation). Log drift instead of absorbing it silently.
+        $sumGrand = round((float) $shopOrders->sum('grand_total'), 2);
+        if ($totalAmount > 0 && abs($sumGrand - $totalAmount) > 0.02) {
+            logger()->warning('PAYMENT_ALLOCATION_TOTAL_MISMATCH', [
+                'payment_id'      => $paymentId,
+                'order_id'        => $orderId,
+                'payment_amount'  => $totalAmount,
+                'shop_orders_sum' => $sumGrand,
+            ]);
+        }
+
+        foreach ($shopOrders as $shopOrder) {
+            $orderAmount = round((float) $shopOrder->grand_total, 2);
+            $discountShare = round((float) $shopOrder->discount_total, 2);
+            $shippingShare = round((float) $shopOrder->shipping_total, 2);
+            $platformFee = round($orderAmount * self::PLATFORM_FEE_RATE, 2);
+            $sellerAmount = round(max(0.0, $orderAmount - $shippingShare - $platformFee), 2);
+
+            app(PaymentService::class)->createPaymentAllocation([
+                'payment_id'     => $paymentId,
+                'shop_order_id'  => $shopOrder->id,
+                'shop_id'        => $shopOrder->shop_id,
+                'order_amount'   => $orderAmount,
+                'discount_share' => $discountShare,
+                'shipping_share' => $shippingShare,
+                'platform_fee'   => $platformFee,
+                'seller_amount'  => $sellerAmount,
+            ]);
         }
     }
 }

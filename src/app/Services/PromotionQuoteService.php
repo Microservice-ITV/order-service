@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Http;
 final class PromotionQuoteService
 {
     /**
+     * @param  list<array{shop_id: string, amount: float}>|null  $shippingByShop
      * @return array{
      *   checkout_id:string,
      *   promotion_ids:array<int,string>,
@@ -15,6 +16,7 @@ final class PromotionQuoteService
      *   shipping_total:float,
      *   final_total:float,
      *   applied_rewards:array<int,array<string,mixed>>,
+     *   allocations:array<int,array<string,mixed>>,
      *   promo_code:?string,
      *   promo_code_status:?string,
      *   promo_code_message:?string
@@ -26,6 +28,7 @@ final class PromotionQuoteService
         float $subtotal,
         float $shippingTotal,
         ?string $promoCode = null,
+        ?array $shippingByShop = null,
     ): array {
         $items = CheckoutItem::query()
             ->where('checkout_id', $checkoutId)
@@ -52,6 +55,11 @@ final class PromotionQuoteService
             'subtotal' => round($subtotal, 2),
             'shipping_total' => round($shippingTotal, 2),
         ];
+
+        $normalizedShippingByShop = $this->normalizeShippingByShop($shippingByShop);
+        if ($normalizedShippingByShop !== []) {
+            $body['shipping_by_shop'] = $normalizedShippingByShop;
+        }
 
         $normalizedCode = $promoCode !== null ? strtoupper(trim($promoCode)) : '';
         if ($normalizedCode !== '') {
@@ -87,6 +95,7 @@ final class PromotionQuoteService
             'shipping_total' => round((float) ($payload['shipping_total'] ?? $shippingTotal), 2),
             'final_total' => round((float) $payload['final_total'], 2),
             'applied_rewards' => is_array($payload['applied_rewards'] ?? null) ? $payload['applied_rewards'] : [],
+            'allocations' => $this->normalizeAllocations(is_array($payload['allocations'] ?? null) ? $payload['allocations'] : []),
             'promo_code' => isset($payload['promo_code']) && is_string($payload['promo_code'])
                 ? strtoupper($payload['promo_code'])
                 : ($normalizedCode !== '' ? $normalizedCode : null),
@@ -97,5 +106,65 @@ final class PromotionQuoteService
                 ? $payload['promo_code_message']
                 : null,
         ];
+    }
+
+    /**
+     * Normalize the per-shop shipping breakdown for the quote request body.
+     *
+     * @param  list<array{shop_id: string, amount: float}>|null  $shippingByShop
+     * @return list<array{shop_id: string, amount: float}>
+     */
+    private function normalizeShippingByShop(?array $shippingByShop): array
+    {
+        $byShop = [];
+        foreach ($shippingByShop ?? [] as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $shopId = isset($row['shop_id']) ? trim((string) $row['shop_id']) : '';
+            if ($shopId === '') {
+                continue;
+            }
+            $amount = round((float) ($row['amount'] ?? 0), 2);
+            $byShop[$shopId] = round(($byShop[$shopId] ?? 0) + $amount, 2);
+        }
+
+        return array_map(
+            static fn (string $shopId, float $amount): array => ['shop_id' => $shopId, 'amount' => $amount],
+            array_keys($byShop),
+            array_values($byShop),
+        );
+    }
+
+    /**
+     * Validate/normalize per-shop discount allocations returned by the quote.
+     *
+     * @param  array<int, mixed>  $allocations
+     * @return list<array{promotion_id: string, promotion_name: string, reward_id: string, shop_id: string, discount_type: string, funded_by: string, amount: float}>
+     */
+    private function normalizeAllocations(array $allocations): array
+    {
+        $result = [];
+        foreach ($allocations as $allocation) {
+            if (!is_array($allocation)) {
+                continue;
+            }
+            $shopId = isset($allocation['shop_id']) ? trim((string) $allocation['shop_id']) : '';
+            $amount = round((float) ($allocation['amount'] ?? 0), 2);
+            if ($shopId === '' || $amount < 0) {
+                continue;
+            }
+            $result[] = [
+                'promotion_id' => (string) ($allocation['promotion_id'] ?? ''),
+                'promotion_name' => (string) ($allocation['promotion_name'] ?? ''),
+                'reward_id' => (string) ($allocation['reward_id'] ?? ''),
+                'shop_id' => $shopId,
+                'discount_type' => ((string) ($allocation['discount_type'] ?? 'ITEM')) === 'SHIPPING' ? 'SHIPPING' : 'ITEM',
+                'funded_by' => ((string) ($allocation['funded_by'] ?? 'PLATFORM')) === 'SELLER' ? 'SELLER' : 'PLATFORM',
+                'amount' => $amount,
+            ];
+        }
+
+        return $result;
     }
 }

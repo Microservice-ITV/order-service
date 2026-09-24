@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Enums\EventTopic;
 use App\Models\CheckoutItem;
+use App\Models\CheckoutShopShipping;
 use App\Repositories\SagaRepository;
 use App\Services\CheckoutService;
 use App\Services\PaymentService;
@@ -95,6 +96,15 @@ class ConsumeProductValidated extends BaseConsumer
                 subtotal: $subtotal,
                 shippingTotal: (float) ($checkout->shipping_total ?? 0),
                 promoCode: $promoCode,
+                shippingByShop: CheckoutShopShipping::query()
+                    ->where('checkout_id', $checkoutId)
+                    ->get()
+                    ->map(static fn (CheckoutShopShipping $row): array => [
+                        'shop_id' => (string) $row->shop_id,
+                        'amount' => (float) $row->shipping_fee,
+                    ])
+                    ->values()
+                    ->all(),
             );
             if ($promoCode !== null) {
                 $promoStatus = $promotionQuote['promo_code_status'] ?? null;

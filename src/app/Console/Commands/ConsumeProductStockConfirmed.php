@@ -7,8 +7,10 @@ use App\Enums\EventTopic;
 use App\Enums\OrderStatus;
 use App\Logging\LogMessage;
 use App\Models\CheckoutItem;
+use App\Models\ShopOrder;
 use App\Services\CheckoutService;
 use App\Services\EventPayloadBuilder;
+use App\Services\OrderService;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 
@@ -75,11 +77,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             return;
         }
 
-        app(OrderInterface::class)->updateByOrderId($orderId, [
-            'status_id' => OrderStatus::READY_FOR_FULFILLMENT->value,
-            'updated_at' => now(),
-        ]);
-
+        // Load checkout items first so we can attribute readiness per shop.
         $checkout->loadMissing('items');
         $eventItems = $checkout->items->map(static function (CheckoutItem $item): array {
             return [
@@ -94,15 +92,43 @@ class ConsumeProductStockConfirmed extends BaseConsumer
                 'category_id' => $item->category_id,
                 'qty' => (int) $item->qty,
                 'unit_price' => (float) $item->price,
-                'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
+                'subtotal' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
                 'currency' => $item->currency ?? 'USD',
                 'available_stock' => $item->available_stock !== null ? (int) $item->available_stock : null,
             ];
         })->values()->all();
 
+        // Stock confirmation covers the whole checkout reservation, so every
+        // shop_order in the order becomes READY_FOR_FULFILLMENT together.
+        // Per-shop independence applies at the shipping stage, not here.
+        ShopOrder::where('order_id', $orderId)
+            ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
+            ->update(['order_status' => OrderStatus::READY_FOR_FULFILLMENT->value, 'updated_at' => now()]);
+
+        // Promote the ORDER-level status only when all shops are ready.
+        // Until then the order stays CONFIRMED and the readiness event is not
+        // published downstream.
+        $allReady = ! ShopOrder::where('order_id', $orderId)
+            ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
+            ->exists();
+
+        if (! $allReady) {
+            logger()->info('ORDER_STILL_PENDING_ALL_SHOPS', [
+                'order_id'   => $orderId,
+                'checkout_id' => $checkoutId,
+            ]);
+
+            return;
+        }
+
+        app(OrderInterface::class)->updateByOrderId($orderId, [
+            'order_status' => OrderStatus::READY_FOR_FULFILLMENT->value,
+            'updated_at'   => now(),
+        ]);
+
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['line_total'] ?? 0),
+            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? 0),
             0.0
         );
         $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
@@ -126,6 +152,14 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             'promotion_discount_total' => $discountTotal,
             'total' => $grandTotal,
             'currency' => $currency,
+            // Per-shop attribution so the read side can render each shop's
+            // own discount/shipping breakdown instead of re-splitting.
+            'promotion_allocations' => array_values(
+                is_array($checkout->promotion_snapshot['allocations'] ?? null)
+                    ? $checkout->promotion_snapshot['allocations']
+                    : []
+            ),
+            'shop_breakdown' => app(OrderService::class)->shopBreakdown($orderId),
             'updatedAt' => now()->utc()->toIso8601String(),
         ]);
 

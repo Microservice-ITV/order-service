@@ -23,7 +23,7 @@ class OrderPaymentDetailController extends Controller
         $orderId = (string) ($data['orderId'] ?? '');
         if ($orderId !== '') {
             $order = Order::query()
-                ->with('status:id,name')
+                ->with('orderStatus:id,name')
                 ->where('order_id', $orderId)
                 ->first();
 
@@ -33,8 +33,8 @@ class OrderPaymentDetailController extends Controller
                     'checkoutId' => $order->checkout_id,
                     'paymentId' => $order->payment_id,
                     'reservationId' => $order->reservation_id,
-                    'orderStatusId' => $order->status_id,
-                    'orderStatus' => $order->status?->name,
+                    'orderStatusId' => $order->order_status,
+                    'orderStatus' => $order->orderStatus?->name,
                     'trackingNumber' => $order->tracking_number,
                     'trackingUrl' => $order->tracking_url,
                     'courierCode' => $order->courier_code,

@@ -8,6 +8,7 @@ use App\Enums\OrderStatus;
 use App\Exceptions\BusinessException;
 use App\Models\CheckoutItem;
 use App\Models\Order;
+use App\Models\ShopOrder;
 use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\RabbitMQ\Publisher;
@@ -20,14 +21,16 @@ final class ShipmentService
     ) {}
 
     /**
-     * Create a shipment for an order. Validates order status, persists courier/tracking
-     * data, updates status to SHIPPED, and publishes shipment.created event.
+     * Create a shipment. When $shopId is provided only that shop's
+     * items are shipped (per-shop fulfillment); otherwise the whole
+     * order ships at once (legacy behaviour, still gated on ALL shops
+     * being ready).
      *
      * @param array{courier_code: string, courier_name: string, courier_phone: string, tracking_number?: string|null, tracking_url?: string|null} $input
      * @return Order
      * @throws BusinessException
      */
-    public function createShipment(string $orderId, array $input): Order
+    public function createShipment(string $orderId, array $input, ?string $shopId = null): Order
     {
         /** @var \App\Models\Order|null $order */
         $order = $this->orders->findById($orderId);
@@ -35,11 +38,12 @@ final class ShipmentService
             throw new BusinessException('Order not found', 404);
         }
 
-        if ($order->status_id !== OrderStatus::READY_FOR_FULFILLMENT->value) {
+        $orderMustBeReady = $shopId === null;
+        if ($orderMustBeReady && $order->order_status !== OrderStatus::READY_FOR_FULFILLMENT->value) {
             throw new BusinessException(
                 'Order must be in READY_FOR_FULFILLMENT status to create shipment',
                 409,
-                ['current_status_id' => $order->status_id]
+                ['current_status_id' => $order->order_status]
             );
         }
 
@@ -50,13 +54,30 @@ final class ShipmentService
             $trackingNumber = $this->generateTrackingNumber($orderId);
         }
 
+        if ($shopId !== null) {
+            return $this->shipShop($order, $shopId, $input, $trackingNumber, $trackingUrl);
+        }
+
+        // --- Legacy path: all-or-nothing shipment (gated on all shops ready) ---
+        $pendingShopCount = ShopOrder::where('order_id', $orderId)
+            ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
+            ->count();
+
+        if ($pendingShopCount > 0) {
+            throw new BusinessException(
+                'All shops must be ready for fulfillment before shipment',
+                409,
+                ['pending_shop_count' => $pendingShopCount]
+            );
+        }
+
         $updateData = [
             'courier_code' => $input['courier_code'],
             'courier_name' => $input['courier_name'],
             'courier_phone' => $input['courier_phone'],
             'tracking_number' => $trackingNumber,
             'tracking_url' => $trackingUrl,
-            'status_id' => OrderStatus::SHIPPED->value,
+            'order_status' => OrderStatus::SHIPPED->value,
             'shipment_created_at' => now(),
             'updated_at' => now(),
         ];
@@ -67,7 +88,104 @@ final class ShipmentService
 
         $this->publishShipmentCreated($order);
 
-        // Advance the saga tracker: shipment creation succeeded.
+        $this->advanceSaga($order);
+
+        return $order;
+    }
+
+    /**
+     * Ship a single shop's portion of the order.
+     */
+    private function shipShop(
+        Order $order,
+        string $shopId,
+        array $input,
+        ?string $trackingNumber,
+        ?string $trackingUrl
+    ): Order {
+        /** @var \App\Models\ShopOrder|null $shopOrder */
+        $shopOrder = ShopOrder::where('order_id', $order->order_id)
+            ->where('shop_id', $shopId)
+            ->first();
+
+        if (!$shopOrder) {
+            throw new BusinessException('Shop not found in this order', 404);
+        }
+
+        if ($shopOrder->order_status !== OrderStatus::READY_FOR_FULFILLMENT->value) {
+            throw new BusinessException(
+                'This shop is not ready for fulfillment',
+                409,
+                ['shop_order_status' => $shopOrder->order_status]
+            );
+        }
+
+        // Persist per-shop shipment data on the shop_order.
+        $shopOrder->update([
+            'tracking_number'   => $trackingNumber,
+            'courier_code'      => $input['courier_code'],
+            'courier_name'      => $input['courier_name'],
+            'courier_phone'     => $input['courier_phone'],
+            'tracking_url'      => $trackingUrl,
+            'order_status'      => OrderStatus::SHIPPED->value,
+            'shipment_created_at' => now(),
+            'updated_at'        => now(),
+        ]);
+
+        // Derive the order-level status from all shop_orders (no sync).
+        $orderService = app(OrderService::class);
+        $derivedStatus = $orderService->derivedOrderStatus($order->order_id);
+        $this->orders->updateOrderStatus($order->order_id, [
+            'order_status' => $derivedStatus,
+            'updated_at'   => now(),
+        ]);
+
+        $order->refresh();
+
+        // Last shop to ship completes fulfillment — tell downstream services
+        // (read model flips the buyer-visible status to FULFILLED).
+        if ($derivedStatus === OrderStatus::FULFILLED->value) {
+            $this->publishOrderFulfilled($order);
+        }
+
+        $this->publishShipmentCreated($order, $shopId);
+
+        $this->advanceSaga($order);
+
+        return $order;
+    }
+
+    /**
+     * Publish order.fulfilled once every shop in the order has shipped.
+     */
+    private function publishOrderFulfilled(Order $order): void
+    {
+        $order->loadMissing('checkoutSession');
+        $checkout = $order->checkoutSession;
+        if (!$checkout) {
+            return;
+        }
+
+        $payload = EventPayloadBuilder::build(
+            EventTopic::ORDER_FULFILLED,
+            $checkout->correlation_id ?? $order->checkout_id,
+            [
+                'order_id' => $order->order_id,
+                'checkout_id' => $order->checkout_id,
+                'user_id' => (string) $checkout->user_id,
+                'status' => 'FULFILLED',
+                'updatedAt' => now()->utc()->toIso8601String(),
+            ],
+        );
+        Publisher::publishStatic(EventTopic::ORDER_FULFILLED, $payload);
+
+        logger()->info('ORDER_FULFILLED_EVENT_PUBLISHED', [
+            'order_id' => $order->order_id,
+        ]);
+    }
+
+    private function advanceSaga(Order $order): void
+    {
         $sagaRepository = app(SagaRepository::class);
         $saga = $sagaRepository->findByOrderId($order->checkout_id);
         if ($saga && !in_array('SHIPMENT_CREATION', $saga->completed_steps ?? [], true)) {
@@ -80,8 +198,6 @@ final class ShipmentService
                 'order_id'   => $order->order_id,
             ]);
         }
-
-        return $order;
     }
 
     private function generateTrackingNumber(string $orderId): string
@@ -91,7 +207,13 @@ final class ShipmentService
         return 'TRK-' . strtoupper(Str::substr($clean, 0, 12)) . '-' . time();
     }
 
-    private function publishShipmentCreated(Order $order): void
+    /**
+     * Publish shipment.created event. When $shopId is given only that
+     * shop's items are included so the read side creates a delivery
+     * scoped to that shop. Courier/tracking are read from the
+     * shop_order (per-shipment data).
+     */
+    private function publishShipmentCreated(Order $order, ?string $shopId = null): void
     {
         $order->loadMissing(['checkoutSession.items']);
         $checkout = $order->checkoutSession;
@@ -101,42 +223,66 @@ final class ShipmentService
 
         $deliveryAddress = $checkout->delivery_address ?? [];
         $recipientName = $deliveryAddress['full_name'] ?? $deliveryAddress['recipient_name'] ?? '';
-        $recipientPhone = $deliveryAddress['phone_no'] ?? $deliveryAddress['recipient_phone'] ?? '';
+        $recipientPhone = $checkout->delivery_address['phone_no'] ?? $checkout->delivery_address['recipient_phone'] ?? '';
 
         $pickupAddress = $this->getPickupAddress();
         $shippingAddress = $deliveryAddress;
 
-        $items = $checkout->items->map(static function (CheckoutItem $item): array {
-            return [
-                'product_id' => $item->product_id,
-                'variant_id' => $item->variant_id,
-                'shop_id' => $item->shop_id !== null ? (string) $item->shop_id : null,
-                'sku' => $item->product_sku,
-                'name' => $item->product_title,
-                'qty' => (int) $item->qty,
-                'unit_price' => (float) $item->price,
-                'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
-                'currency' => $item->currency ?? 'USD',
-            ];
-        })->values()->all();
+        $items = $checkout->items
+            ->when($shopId, fn ($collection) => $collection->where('shop_id', $shopId))
+            ->map(static function (CheckoutItem $item): array {
+                return [
+                    'product_id' => $item->product_id,
+                    'variant_id' => $item->variant_id,
+                    'shop_id'    => $item->shop_id !== null ? (string) $item->shop_id : null,
+                    'sku'        => $item->product_sku,
+                    'name'       => $item->product_title,
+                    'qty'        => (int) $item->qty,
+                    'unit_price' => (float) $item->price,
+                    'line_total' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
+                    'currency'   => $item->currency ?? 'USD',
+                ];
+            })
+            ->values()
+            ->all();
+
+        // Courier/tracking come from the affected shop_order; the legacy
+        // whole-order path falls back to the order-level columns.
+        $so = null;
+        if ($shopId !== null) {
+            $so = ShopOrder::where('order_id', $order->order_id)
+                ->where('shop_id', $shopId)
+                ->first();
+        }
+
+        $courierCode = $so?->courier_code ?? $order->courier_code ?? '';
+        $courierName = $so?->courier_name ?? $order->courier_name ?? '';
+        $courierPhone = $so?->courier_phone ?? $order->courier_phone ?? '';
+        $trackingNumber = $so?->tracking_number ?? $order->tracking_number;
+        $trackingUrl = $so?->tracking_url ?? $order->tracking_url;
 
         $data = [
-            'order_id' => $order->order_id,
+            'order_id'        => $order->order_id,
             'order_reference' => $order->checkout_id,
-            'customer_id' => (string) $checkout->user_id,
-            'recipient_name' => $recipientName,
+            'customer_id'     => (string) $checkout->user_id,
+            'shop_id'         => $shopId,
+            'order_status'    => OrderStatus::tryFrom((int) $order->order_status)?->name,
+            'recipient_name'  => $recipientName,
             'recipient_phone' => $recipientPhone,
-            'pickup_address' => $pickupAddress,
-            'delivery_address' => $deliveryAddress,
-            'shipping_address' => $shippingAddress,
-            'items' => $items,
-            'courier' => [
-                'code' => $order->courier_code,
-                'name' => $order->courier_name,
-                'phone' => $order->courier_phone,
+            'pickup_address'  => $pickupAddress,
+            'delivery_address'=> $deliveryAddress,
+            'shipping_address'=> $shippingAddress,
+            'items'           => $items,
+            'courier'         => [
+                'code' => $courierCode,
+                'name' => $courierName,
+                'phone'=> $courierPhone,
             ],
-            'tracking_number' => $order->tracking_number,
-            'tracking_url' => $order->tracking_url,
+            'tracking_number' => $trackingNumber,
+            'tracking_url'    => $trackingUrl,
+            // Fresh per-shop statuses (the shipping shop is now SHIPPED) so
+            // the read model can recompute order-level progress exactly.
+            'shop_breakdown'  => app(OrderService::class)->shopBreakdown($order->order_id),
         ];
 
         $correlationId = $checkout->correlation_id ?? $order->checkout_id;
@@ -145,7 +291,8 @@ final class ShipmentService
 
         logger()->info('SHIPMENT_CREATED_EVENT_PUBLISHED', [
             'order_id' => $order->order_id,
-            'payload' => $payload,
+            'shop_id'  => $shopId,
+            'payload'  => $payload,
         ]);
     }
 
