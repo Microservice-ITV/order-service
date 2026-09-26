@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class CheckoutItemSeeder extends Seeder
 {
@@ -24,7 +23,6 @@ class CheckoutItemSeeder extends Seeder
     private function insertItem(string $checkoutId, array $product, int $qty, $createdAt): void
     {
         DB::table('checkout_items')->insert([
-            'id' => (string) Str::uuid(),
             'checkout_id' => $checkoutId,
             'product_id' => $product['id'],
             'variant_id' => $product['variant_id'],

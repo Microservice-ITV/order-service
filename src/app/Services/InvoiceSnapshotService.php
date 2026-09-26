@@ -19,6 +19,8 @@ final class InvoiceSnapshotService
      *   orderId: string,
      *   checkoutId: string,
      *   customerId: string,
+    *   customerName: string|null,
+    *   customerEmail: string|null,
      *   items: list<array{
      *     orderItemId: string,
      *     productId: string,
@@ -27,7 +29,8 @@ final class InvoiceSnapshotService
      *     quantity: int,
      *     unitPrice: string,
      *     lineTotal: string|null,
-     *     shopId: string|null
+    *     shopId: string|null,
+    *     shopName: string|null
      *   }>,
      *   currency: string|null,
      *   subtotal: string,
@@ -54,6 +57,19 @@ final class InvoiceSnapshotService
         }
 
         $items = $checkout->items;
+        $deliveryAddress = is_array($checkout->delivery_address)
+            ? $checkout->delivery_address
+            : [];
+
+        $customerName = $this->firstNonEmptyString(
+            $deliveryAddress['full_name'] ?? null,
+            $deliveryAddress['customer_name'] ?? null,
+            $deliveryAddress['name'] ?? null,
+        );
+        $customerEmail = $this->firstNonEmptyString(
+            $deliveryAddress['email'] ?? null,
+            $deliveryAddress['customer_email'] ?? null,
+        );
 
         $currency = $items
             ->pluck('currency')
@@ -78,6 +94,8 @@ final class InvoiceSnapshotService
             'orderId' => (string) $order->order_id,
             'checkoutId' => (string) $checkout->id,
             'customerId' => (string) $checkout->user_id,
+            'customerName' => $customerName,
+            'customerEmail' => $customerEmail,
 
             'items' => $items
                 ->map(static fn($item): array => [
@@ -97,6 +115,7 @@ final class InvoiceSnapshotService
                     'shopId' => $item->shop_id !== null
                         ? (string) $item->shop_id
                         : null,
+                    'shopName' => null,
                 ])
                 ->values()
                 ->all(),
@@ -132,5 +151,19 @@ final class InvoiceSnapshotService
                 ''
             ),
         ];
+    }
+
+    private function firstNonEmptyString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if (is_string($value)) {
+                $normalized = trim($value);
+                if ($normalized !== '') {
+                    return $normalized;
+                }
+            }
+        }
+
+        return null;
     }
 }
