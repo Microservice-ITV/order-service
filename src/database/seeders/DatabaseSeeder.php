@@ -16,12 +16,12 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             OrderStatusSeeder::class,
-            CheckoutSessionSeeder::class,
-            CheckoutItemSeeder::class,
-            CheckoutShopShippingSeeder::class,
-            OrderSeeder::class,
-            SagaStateSeeder::class,
-            OutboxEventSeeder::class,
+            // CheckoutSessionSeeder::class,
+            // CheckoutItemSeeder::class,
+            // CheckoutShopShippingSeeder::class,
+            // OrderSeeder::class,
+            // SagaStateSeeder::class,
+            // OutboxEventSeeder::class,
         ]);
     }
 }
