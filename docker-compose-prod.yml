@@ -6,6 +6,9 @@ networks:
     external: true
 
 services:
+  ###############################################################
+  # Web (php-fpm) — serves /api via orderservice-nginx
+  ###############################################################
   app:
     image: itvmicroservicesteam/orderservice-app:latest
     container_name: orderservice-${PHP_CONTAINER_NAME}
@@ -31,6 +34,110 @@ services:
         condition: service_healthy
     networks:
       - app-network
+
+  ###############################################################
+  # Event consumer — php artisan consume:all as a long-running
+  # background process (mirrors docker-compose.yml order-consumer).
+  # Connects to the shared broker on itv-network at RABBITMQ_HOST.
+  # The prod image entrypoint starts php-fpm, so it is overridden
+  # here just like in the local docker-compose.yml.
+  ###############################################################
+  consumer:
+    image: itvmicroservicesteam/orderservice-app:latest
+    container_name: orderservice-${CONSUMER_CONTAINER_NAME:-consumer}
+    restart: always
+    volumes:
+      - ./.env:/var/www/html/.env
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_KEY: ${APP_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint: ["php", "artisan", "consume:all"]
+
+  ###############################################################
+  # Saga timeout processor — process-timeouts every 5 min
+  # (mirrors docker-compose.yml order-saga-manager).
+  ###############################################################
+  saga-manager:
+    image: itvmicroservicesteam/orderservice-app:latest
+    container_name: orderservice-${SAGA_MANAGER_CONTAINER_NAME:-saga-manager}
+    restart: always
+    volumes:
+      - ./.env:/var/www/html/.env
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_KEY: ${APP_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint: >
+      sh -c "
+        while true; do
+          echo \"Running saga timeout processing at \$(date)\"
+          php artisan saga:manage process-timeouts --limit=50
+          sleep 300
+        done
+      "
+
+  ###############################################################
+  # Saga cleanup — cleanup-old-sagas once per day
+  # (mirrors docker-compose.yml order-saga-stats).
+  ###############################################################
+  saga-stats:
+    image: itvmicroservicesteam/orderservice-app:latest
+    container_name: orderservice-${SAGA_STATS_CONTAINER_NAME:-saga-stats}
+    restart: always
+    volumes:
+      - ./.env:/var/www/html/.env
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_KEY: ${APP_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint: >
+      sh -c "
+        while true; do
+          echo \"Running saga statistics cleanup at \$(date)\"
+          php artisan saga:manage cleanup-old-sagas --days=7
+          sleep 86400
+        done
+      "
 
   mysql:
     image: mysql:8.4
