@@ -11,6 +11,10 @@
 .env
 .env.*
 !.env.example
+# Nested dev env must never be baked in: it would shadow into
+# /var/www/html/.env if the prod bind mount is ever missing.
+src/.env
+src/.env.*
 
 # Dependencies — installed in image
 node_modules
