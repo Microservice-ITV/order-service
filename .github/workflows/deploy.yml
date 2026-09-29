@@ -162,7 +162,7 @@ jobs:
 
             echo "📄 Creating .env.prod..."
 
-            cat > .env.prod <<EOF
+            cat > .env.prod <<'EOF'
             ${{ secrets.PROD_ENV }}
             EOF
 
