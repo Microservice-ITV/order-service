@@ -289,7 +289,33 @@ jobs:
             docker exec orderservice-php php artisan tinker --execute="dump(config('services.product.url'), config('services.payment.url'), config('services.promotion.url'), config('queue.default'));"
 
             ##################################################
-            # 11. Wait for services
+            # 11. Reachability smoke tests
+            #     Catches a dead broker or an unresolvable
+            #     service host here, instead of in container
+            #     logs an hour later.
+            ##################################################
+
+            BROKER_HOST=$(sed -n 's/^RABBITMQ_HOST=//p' .env.prod | tr -d '"' | head -1)
+            BROKER_PORT=$(sed -n 's/^RABBITMQ_PORT=//p' .env.prod | tr -d '"' | head -1)
+
+            echo "🔌 Probing RabbitMQ ${BROKER_HOST}:${BROKER_PORT} from orderservice-php..."
+
+            docker exec orderservice-php php -r "\$c = @stream_socket_client(\"tcp://${BROKER_HOST}:${BROKER_PORT}\", \$e, \$s, 5); if (!\$c) { echo \"broker unreachable: \$s\n\"; exit(1); } echo \"broker reachable\n\";"
+
+            echo "🔍 Resolving every configured service host..."
+
+            for host in $(grep -oE '^[A-Z_]*SERVICE_URL=https?://[^/:]+' .env.prod | sed -E 's#.*://##'); do
+              if ! docker exec orderservice-php getent hosts "$host" >/dev/null; then
+                echo "❌ $host does not resolve from orderservice-php (not running, or not on itv-network)"
+                exit 1
+              fi
+              echo "✅ $host resolves"
+            done
+
+            echo "✅ Reachability checks passed"
+
+            ##################################################
+            # 12. Wait for services
             ##################################################
 
             echo "⏳ Waiting for services..."
@@ -297,7 +323,7 @@ jobs:
             sleep 15
 
             ##################################################
-            # 12. Container status
+            # 13. Container status
             ##################################################
 
             echo "📊 Container status..."
@@ -308,7 +334,7 @@ jobs:
               ps
 
             ##################################################
-            # 13. Background worker status
+            # 14. Background worker status
             ##################################################
 
             echo "📊 Consumer / saga worker status..."
@@ -319,7 +345,7 @@ jobs:
             done
 
             ##################################################
-            # 14. Container logs
+            # 15. Container logs
             ##################################################
 
             echo "📋 App container logs..."
@@ -334,7 +360,7 @@ jobs:
             docker logs --tail=50 orderservice-consumer
 
             ##################################################
-            # 15. Cleanup
+            # 16. Cleanup
             ##################################################
 
             echo "🧹 Cleaning unused Docker images..."

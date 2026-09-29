@@ -32,13 +32,16 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - app-network
 
   ###############################################################
   # Event consumer — php artisan consume:all as a long-running
   # background process (mirrors docker-compose.yml order-consumer).
-  # Connects to the shared broker on itv-network at RABBITMQ_HOST.
+  # The broker is declared below (service `rabbitmq`, container_name
+  # `rabbitmq`), so RABBITMQ_HOST=rabbitmq resolves on itv-network.
   # The prod image entrypoint starts php-fpm, so it is overridden
   # here just like in the local docker-compose.yml.
   ###############################################################
@@ -64,6 +67,8 @@ services:
       start_period: 20s
     depends_on:
       mysql:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - app-network
@@ -95,6 +100,8 @@ services:
       start_period: 20s
     depends_on:
       mysql:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - app-network
@@ -139,6 +146,39 @@ services:
         done
       "
 
+  ###############################################################
+  # Shared message broker — the only RabbitMQ in the fleet.
+  # Declared here (not in a separate infra stack) so this stack
+  # owns it; the service name `rabbitmq` registers the DNS alias
+  # that every service's RABBITMQ_HOST=rabbitmq resolves to on
+  # itv-network, so promotion/delivery/product/payment need no
+  # changes. 5672 is NOT published to the host: containers on
+  # itv-network only. Management UI is loopback-only — reach it
+  # with: ssh -L 15672:127.0.0.1:15672 root@<vps>
+  # Credentials mirror RABBITMQ_USER/RABBITMQ_PASSWORD in .env.prod
+  # so broker and clients can never disagree.
+  ###############################################################
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    hostname: rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 40s
+    networks:
+      - app-network
+
   mysql:
     image: mysql:8.4
     container_name: orderservice-${DB_CONTAINER_NAME}
@@ -175,3 +215,4 @@ services:
 
 volumes:
   mysql_data:
+  rabbitmq_data:
