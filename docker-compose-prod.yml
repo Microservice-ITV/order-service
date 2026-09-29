@@ -14,7 +14,7 @@ services:
     container_name: orderservice-${PHP_CONTAINER_NAME}
     restart: always
     volumes:
-      - ./.env:/var/www/html/.env
+      - ./.env.prod:/var/www/html/.env:ro
     environment:
       APP_ENV: ${APP_ENV}
       APP_KEY: ${APP_KEY}
@@ -47,7 +47,7 @@ services:
     container_name: orderservice-${CONSUMER_CONTAINER_NAME:-consumer}
     restart: always
     volumes:
-      - ./.env:/var/www/html/.env
+      - ./.env.prod:/var/www/html/.env:ro
     environment:
       APP_ENV: ${APP_ENV}
       APP_KEY: ${APP_KEY}
@@ -78,7 +78,7 @@ services:
     container_name: orderservice-${SAGA_MANAGER_CONTAINER_NAME:-saga-manager}
     restart: always
     volumes:
-      - ./.env:/var/www/html/.env
+      - ./.env.prod:/var/www/html/.env:ro
     environment:
       APP_ENV: ${APP_ENV}
       APP_KEY: ${APP_KEY}
@@ -116,7 +116,7 @@ services:
     container_name: orderservice-${SAGA_STATS_CONTAINER_NAME:-saga-stats}
     restart: always
     volumes:
-      - ./.env:/var/www/html/.env
+      - ./.env.prod:/var/www/html/.env:ro
     environment:
       APP_ENV: ${APP_ENV}
       APP_KEY: ${APP_KEY}

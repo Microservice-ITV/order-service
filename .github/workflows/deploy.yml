@@ -4,19 +4,27 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
+
+  #####################################################
+  # BUILD & PUSH TO DOCKER HUB
+  #####################################################
+
   build-and-push:
-    name: 🐳 Build & Push Docker Images
+    name: 🐳 Build & Push Docker Image
     runs-on: ubuntu-latest
 
     steps:
+
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
       #################################################
       # Docker Hub Login
       #################################################
+
       - name: 🐳 Docker Hub Login
         uses: docker/login-action@v3
         with:
@@ -26,6 +34,7 @@ jobs:
       #################################################
       # Build & Push App Image
       #################################################
+
       - name: 🏗️ Build & Push App Image
         uses: docker/build-push-action@v6
         with:
@@ -39,12 +48,60 @@ jobs:
   #####################################################
   # DEPLOY TO VPS
   #####################################################
+
   deploy:
     name: 🚀 Deploy to VPS
     runs-on: ubuntu-latest
     needs: build-and-push
 
     steps:
+
+      #################################################
+      # Checkout repository
+      # The pushed commit is the source of truth for compose/nginx.
+      #################################################
+
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      #################################################
+      # Prepare deployment directory
+      #################################################
+
+      - name: 📁 Prepare deployment directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+
+          script: |
+            set -e
+
+            mkdir -p "/var/www/html/microservices/order-service/docker/prod/nginx"
+
+      #################################################
+      # Upload production config files from the repo
+      # (scp instead of curl: no raw-content caching, no
+      #  branch race, and the deployed commit is exact)
+      #################################################
+
+      - name: 📤 Upload docker-compose-prod.yml and nginx conf
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: "docker-compose-prod.yml,docker/prod/nginx/default.conf"
+          target: "/var/www/html/microservices/order-service/"
+          overwrite: true
+
+      #################################################
+      # SSH Deploy
+      #################################################
+
       - name: 🚀 SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -54,63 +111,234 @@ jobs:
           port: ${{ secrets.SERVER_PORT }}
 
           script: |
+            set -Eeuo pipefail
 
-            set -e
+            trap 'echo "❌ Deployment failed at line $LINENO: $BASH_COMMAND"' ERR
 
             echo "🚀 Deploying Order Service..."
 
             DEPLOY_DIR="/var/www/html/microservices/order-service"
-            rm -rf "$DEPLOY_DIR"
+
+            ##################################################
+            # 1. Prepare deployment directory
+            #    (no rm -rf: the tree is refreshed by scp)
+            ##################################################
+
+            echo "📁 Preparing deployment directory..."
+
             mkdir -p "$DEPLOY_DIR/docker/prod/nginx"
             cd "$DEPLOY_DIR"
 
-            ##################################################
-            # 1. Download config files from GitHub
-            ##################################################
-            echo "📄 Downloading docker-compose-prod.yml..."
-            curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -o docker-compose-prod.yml \
-              https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker-compose-prod.yml
-
-            echo "📄 Downloading nginx default.conf..."
-            curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -o docker/prod/nginx/default.conf \
-              https://raw.githubusercontent.com/Microservice-ITV/order-service/main/docker/prod/nginx/default.conf
+            echo "📍 Current directory:"
+            pwd
 
             ##################################################
-            # 📄 Create env files on server
+            # 2. Verify uploaded production config
             ##################################################
-            echo "📄 Creating prod.env..."
-            cat > prod.env <<EOF
+
+            echo "📄 Checking uploaded files..."
+
+            test -f docker-compose-prod.yml
+            test -f docker/prod/nginx/default.conf
+
+            echo "✅ docker-compose-prod.yml and nginx conf found"
+            ls -lah docker-compose-prod.yml docker/prod/nginx/default.conf
+
+            ##################################################
+            # 3. Create the single production environment file
+            #
+            #    .env.prod is used twice, from ONE source:
+            #      a) compose --env-file  → interpolation
+            #         (container names, NETWORK_NAME, DB creds)
+            #      b) bind-mounted into every app container as
+            #         /var/www/html/.env  → Laravel's own env
+            #    (there is no second .env / LARAVEL_ENV secret,
+            #     so the two can no longer disagree)
+            #
+            #    Must stay world-readable: inside the container
+            #    php-fpm reads it as www-data. chmod 600 (owned
+            #    by root) would make Laravel's env unreadable.
+            ##################################################
+
+            echo "📄 Creating .env.prod..."
+
+            cat > .env.prod <<EOF
             ${{ secrets.PROD_ENV }}
             EOF
-            chmod 600 prod.env
 
-            echo "📄 Creating .env (Laravel)..."
-            cat > .env <<EOF
-            ${{ secrets.LARAVEL_ENV }}
-            EOF
-            chmod 644 .env
+            chmod 644 .env.prod
+
+            echo "✅ Production environment file created"
 
             ##################################################
-            # 2. Docker Login (for pulling private images)
+            # 4. Guard: refuse to ship dev service URLs
+            #    Inside orderservice-php, localhost/127.0.0.1 is
+            #    the container itself, so these fail silently at
+            #    checkout ("Unable to validate product stock").
             ##################################################
-            echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            echo "🔍 Checking the single env file..."
+
+            # 1) Dev service URLs: inside the container localhost is the app
+            #    itself, which surfaces as "Unable to validate product stock".
+            if grep -qE '^[A-Z_]*SERVICE_URL=(https?://)?(localhost|127\.0\.0\.1|\[::1\])' .env.prod; then
+              echo "❌ Refusing to deploy: PROD_ENV contains a localhost service URL."
+              grep -nE '^[A-Z_]*SERVICE_URL=' .env.prod
+              exit 1
+            fi
+
+            # 2) Broker host (the consumer / saga workers depend on it).
+            if grep -qE '^RABBITMQ_HOST=(localhost|127\.0\.0\.1)' .env.prod; then
+              echo "❌ Refusing to deploy: RABBITMQ_HOST points at localhost."
+              exit 1
+            fi
+
+            # 3) DB_CONNECTION is mandatory: config/database.php falls back to
+            #    "sqlite" when absent, which breaks every query silently.
+            if ! grep -qE '^DB_CONNECTION=' .env.prod; then
+              echo "❌ Refusing to deploy: DB_CONNECTION is missing from PROD_ENV."
+              exit 1
+            fi
+
+            grep -nE '^[A-Z_]*(SERVICE_URL|RABBITMQ_HOST|QUEUE_CONNECTION|DB_CONNECTION)=' .env.prod
+
+            echo "✅ Environment looks production-safe"
 
             ##################################################
-            # 3. Pull latest images
+            # 5. Docker Hub Login
             ##################################################
-            docker compose -f docker-compose-prod.yml --env-file prod.env pull
+
+            echo "🔐 Logging into Docker Hub..."
+
+            echo "${{ secrets.DOCKER_TOKEN }}" \
+              | docker login \
+              -u "${{ secrets.DOCKER_USERNAME }}" \
+              --password-stdin
+
+            echo "✅ Docker Hub login successful"
 
             ##################################################
-            # 4. Restart containers
+            # 6. Validate Docker Compose
             ##################################################
-            docker compose -f docker-compose-prod.yml --env-file prod.env up -d
+
+            echo "🐳 Docker Compose version..."
+
+            docker compose version
+
+            echo "🔍 Validating Docker Compose configuration..."
+
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose-prod.yml \
+              config --quiet
+
+            echo "✅ Docker Compose configuration is valid"
 
             ##################################################
-            # 5. Cleanup
+            # 7. Pull latest image
             ##################################################
+
+            echo "🐳 Pulling Order Service image..."
+
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose-prod.yml \
+              pull
+
+            echo "✅ Order Service image pulled"
+
+            ##################################################
+            # 8. Start / Update containers
+            ##################################################
+
+            echo "🚀 Starting Order Service containers..."
+
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose-prod.yml \
+              up -d \
+              --remove-orphans
+
+            echo "✅ Order Service containers started"
+
+            ##################################################
+            # 9. Reload nginx
+            #    Compose does not reload nginx when only the
+            #    bind-mounted vhost content changes, and a stale
+            #    IP upstream silently routes to the wrong app.
+            ##################################################
+
+            echo "🔁 Validating and reloading nginx..."
+
+            docker exec orderservice-nginx nginx -t
+            docker exec orderservice-nginx nginx -s reload || docker restart orderservice-nginx
+
+            echo "🔍 Effective php-fpm upstream:"
+            docker exec orderservice-nginx sh -c \
+              "nginx -T 2>/dev/null | grep -E 'set .php_fpm|fastcgi_pass' || true"
+
+            ##################################################
+            # 10. Clear cached Laravel config so .env changes apply
+            ##################################################
+
+            echo "🧹 Clearing Laravel config cache..."
+
+            docker exec orderservice-php php artisan config:clear
+
+            echo "🔍 Effective service endpoints inside the app:"
+            docker exec orderservice-php php artisan tinker --execute="dump(config('services.product.url'), config('services.payment.url'), config('services.promotion.url'), config('queue.default'));"
+
+            ##################################################
+            # 11. Wait for services
+            ##################################################
+
+            echo "⏳ Waiting for services..."
+
+            sleep 15
+
+            ##################################################
+            # 12. Container status
+            ##################################################
+
+            echo "📊 Container status..."
+
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose-prod.yml \
+              ps
+
+            ##################################################
+            # 13. Background worker status
+            ##################################################
+
+            echo "📊 Consumer / saga worker status..."
+
+            for c in orderservice-consumer orderservice-saga-manager orderservice-saga-stats; do
+              printf '%s: %s\n' "$c" \
+                "$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo 'missing')"
+            done
+
+            ##################################################
+            # 14. Container logs
+            ##################################################
+
+            echo "📋 App container logs..."
+
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose-prod.yml \
+              logs --tail=50 app
+
+            echo "📋 Consumer container logs..."
+
+            docker logs --tail=50 orderservice-consumer
+
+            ##################################################
+            # 15. Cleanup
+            ##################################################
+
+            echo "🧹 Cleaning unused Docker images..."
+
             docker image prune -f
-            docker system prune -f
 
             echo "✅ Order Service Deployment Successful!"
