@@ -37,6 +37,9 @@ Route::controller(CheckoutController::class)->prefix('orders')->group(function (
 // Saga-based Order Management Routes (auth handled by auth-service / API gateway if needed)
 Route::controller(SagaCheckoutController::class)->prefix('saga')->group(function () {
     Route::post('/orders/checkout', 'startCheckout')->name('saga.orders.checkout');
+    Route::post('/orders/tax-quote', 'quoteTax')->name('saga.orders.tax-quote');
+    Route::post('/orders/checkout/{checkout_id}/tax-preview', 'previewTax')->name('saga.orders.checkout.tax-preview');
+    Route::put('/orders/checkout/{checkout_id}/payment-method', 'updatePaymentMethod')->name('saga.orders.checkout.payment-method');
     Route::post('/orders/{checkoutId}/complete', 'completeCheckout')->name('saga.orders.complete');
     Route::get('/sagas/{sagaId}', 'getSagaStatus')->name('sagas.status');
     Route::get('/sagas/statistics', 'getSagaStatistics')->name('sagas.statistics');

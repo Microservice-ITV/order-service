@@ -14,7 +14,7 @@ use Illuminate\Http\Request;
 class CheckoutController extends Controller
 {
     public function __construct(
-        private readonly CheckoutService $checkoutService
+        private readonly CheckoutService $checkoutService,
     ) {}
 
     public function checkout(CheckoutRequest $request): JsonResponse
@@ -112,6 +112,7 @@ class CheckoutController extends Controller
                     'checkout_items_missing_shop_id' => 'Cart line items must include shop_id to use per-shop shipping',
                     'shop_shippings_invalid' => 'shop_shippings could not be applied (empty or invalid shop ids)',
                     'promotion_quote_failed' => 'Promotion pricing is temporarily unavailable; please try again',
+                    'tax_quote_failed' => 'Tax pricing is temporarily unavailable; please try again',
                     'promo_code_invalid' => match ($result['promo_code_status'] ?? null) {
                         'LIMIT_REACHED' => $result['promo_code_message'] ?? 'Promo code has reached its usage limit',
                         'NOT_APPLICABLE' => $result['promo_code_message'] ?? 'Promo code does not apply to the current cart',
@@ -151,6 +152,9 @@ class CheckoutController extends Controller
                 $payload['grand_total'] = $result['grand_total'];
                 $payload['shipping_total'] = $result['shipping_total'];
                 $payload['promotion_discount_total'] = $result['promotion_discount_total'] ?? 0;
+                $payload['tax_amount'] = $result['tax_amount'] ?? 0;
+                $payload['taxable_amount'] = $result['taxable_amount'] ?? 0;
+                $payload['tax_enabled'] = $result['tax_enabled'] ?? true;
                 if (!empty($result['promo_code'])) {
                     $payload['promo_code'] = $result['promo_code'];
                 }

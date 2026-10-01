@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CheckoutSession;
+use App\Services\CheckoutService;
 use App\Services\SagaCheckoutService;
+use App\Services\TaxQuoteService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -16,9 +19,123 @@ class SagaCheckoutController extends Controller
 {
     private SagaCheckoutService $sagaCheckoutService;
 
-    public function __construct(SagaCheckoutService $sagaCheckoutService)
-    {
+    public function __construct(
+        SagaCheckoutService $sagaCheckoutService,
+        private readonly CheckoutService $checkoutService,
+        private readonly TaxQuoteService $taxQuoteService,
+    ) {
         $this->sagaCheckoutService = $sagaCheckoutService;
+    }
+
+    public function previewTax(Request $request, string $checkout_id): JsonResponse
+    {
+        $discountTotal = round((float) $request->input('discount_total', 0), 2);
+        $allocations = $request->input('allocations', []);
+        if (!is_array($allocations)) {
+            $allocations = [];
+        }
+        $categoryByProduct = $request->input('category_by_product', []);
+        if (!is_array($categoryByProduct)) {
+            $categoryByProduct = [];
+        }
+        $categories = [];
+        foreach ($categoryByProduct as $productId => $categoryId) {
+            $productKey = trim((string) $productId);
+            $categoryKey = trim((string) $categoryId);
+            if ($productKey !== '' && $categoryKey !== '') {
+                $categories[$productKey] = $categoryKey;
+            }
+        }
+
+        if (!CheckoutSession::query()->where('id', $checkout_id)->exists()) {
+            return response()->json([
+                'error' => 'Checkout session not found',
+            ], 404);
+        }
+
+        try {
+            $quote = $this->checkoutService->previewTax($checkout_id, $discountTotal, $allocations, $categories);
+        } catch (\Throwable $e) {
+            logger()->error('CHECKOUT_TAX_PREVIEW_FAILED', [
+                'checkout_id' => $checkout_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'checkout_id' => $checkout_id,
+                'error' => 'Tax pricing is temporarily unavailable; please try again',
+            ], 502);
+        }
+
+        return response()->json([
+            'checkout_id' => $checkout_id,
+            'tax_enabled' => $quote['tax_enabled'],
+            'tax_amount' => $quote['tax_amount'],
+            'taxable_amount' => $quote['taxable_amount'],
+            'reason' => $quote['reason'],
+            'lines' => $quote['lines'],
+        ]);
+    }
+
+    public function quoteTax(Request $request): JsonResponse
+    {
+        $items = $request->input('items', []);
+        if (!is_array($items)) {
+            $items = [];
+        }
+
+        $lines = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $lines[] = [
+                'line_id' => (string) ($item['line_id'] ?? ''),
+                'category_id' => (string) ($item['category_id'] ?? ''),
+                'amount' => $item['amount'] ?? 0,
+            ];
+        }
+
+        try {
+            $quote = $this->taxQuoteService->quoteCategoryLines($lines);
+        } catch (\Throwable $e) {
+            logger()->error('CHECKOUT_TAX_QUOTE_FAILED', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'error' => 'Tax pricing is temporarily unavailable; please try again',
+            ], 502);
+        }
+
+        return response()->json([
+            'tax_enabled' => $quote['tax_enabled'],
+            'tax_amount' => $quote['tax_amount'],
+            'taxable_amount' => $quote['taxable_amount'],
+            'reason' => $quote['reason'],
+            'lines' => $quote['lines'],
+        ]);
+    }
+
+    public function updatePaymentMethod(Request $request, string $checkout_id): JsonResponse
+    {
+        $paymentMethod = (string) $request->input('payment_method', '');
+        if (!in_array($paymentMethod, ['prepaid', 'cod'], true)) {
+            return response()->json([
+                'error' => 'Invalid payment method',
+            ], 422);
+        }
+
+        if (!$this->checkoutService->updatePaymentMethod($checkout_id, $paymentMethod)) {
+            return response()->json([
+                'error' => 'Checkout session not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'checkout_id' => $checkout_id,
+            'payment_method' => $paymentMethod,
+        ]);
     }
 
     /**

@@ -26,6 +26,7 @@ class OrderService
         $totalSubtotal = (float) ($checkout->items->sum('line_total') ?? 0);
         $shippingTotal = (float) ($checkout->shipping_total ?? 0);
         $discountTotal = (float) ($checkout->promotion_discount_total ?? 0);
+        $taxAmount = (float) ($checkout->tax_amount ?? 0);
         $grandTotal = (float) ($checkout->total ?? 0);
         $isCod = ($checkout->payment_method ?? '') === 'cod';
 
@@ -40,6 +41,9 @@ class OrderService
             'subtotal'       => $totalSubtotal,
             'shipping_total' => $shippingTotal,
             'discount_total' => $discountTotal,
+            'tax_amount'     => $taxAmount,
+            'taxable_amount' => (float) ($checkout->taxable_amount ?? 0),
+            'tax_enabled'    => (bool) ($checkout->tax_enabled ?? true),
             'grand_total'    => $grandTotal,
             'payment_status' => $isCod ? 'COD' : 'PENDING',
         ]);
@@ -52,8 +56,18 @@ class OrderService
      */
     public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): void
     {
+        $taxLines = [];
+        foreach (is_array($checkout->tax_snapshot['lines'] ?? null) ? $checkout->tax_snapshot['lines'] : [] as $line) {
+            if (is_array($line) && isset($line['line_id'])) {
+                $taxLines[(string) $line['line_id']] = $line;
+            }
+        }
+
         $rows = $checkout->items
-            ->map(function (CheckoutItem $item) use ($order): array {
+            ->map(function (CheckoutItem $item) use ($order, $taxLines): array {
+                $taxLine = $taxLines[(string) $item->id] ?? [];
+                $storedTax = round((float) ($item->tax_amount ?? 0), 2);
+                $snapshotTax = round((float) ($taxLine['tax_amount'] ?? 0), 2);
                 return [
                     'id'      => (string) Str::uuid(),
                     'order_id'            => $order->order_id,
@@ -68,6 +82,8 @@ class OrderService
                     'product_description' => $item->product_description,
                     'product_sku'         => $item->product_sku,
                     'category_id'         => $item->category_id,
+                    'tax_amount'          => $storedTax > 0 ? $storedTax : $snapshotTax,
+                    'discount_amount'     => $taxLine['discount_allocated'] ?? 0,
                     'shop_id'             => $item->shop_id,
                     'image_url'           => $item->image_url,
                     'currency'            => $item->currency,
@@ -99,10 +115,11 @@ class OrderService
         foreach ($rows as $row) {
             $shopId = $row['shop_id'];
             if (!isset($shopGroups[$shopId])) {
-                $shopGroups[$shopId] = ['items' => [], 'subtotal' => 0];
+                $shopGroups[$shopId] = ['items' => [], 'subtotal' => 0, 'tax_total' => 0];
             }
             $shopGroups[$shopId]['items'][] = $row;
             $shopGroups[$shopId]['subtotal'] += (float) $row['subtotal'];
+            $shopGroups[$shopId]['tax_total'] = ($shopGroups[$shopId]['tax_total'] ?? 0) + (float) ($row['tax_amount'] ?? 0);
         }
 
         $shopIds = array_keys($shopGroups);
@@ -140,7 +157,8 @@ class OrderService
             $shopSubtotal = $shopSubtotals[$shopId];
             $shopShipping = $shippingByShop[$shopId];
             $shopDiscount = $discountByShop[$shopId];
-            $shopGrandTotal = round($shopSubtotal + $shopShipping - $shopDiscount, 2);
+            $shopTax = round((float) ($group['tax_total'] ?? 0), 2);
+            $shopGrandTotal = round($shopSubtotal + $shopShipping - $shopDiscount + $shopTax, 2);
 
             $shopOrder = ShopOrder::create([
                 'id'              => (string) Str::uuid(),
@@ -149,6 +167,7 @@ class OrderService
                 'subtotal'        => $shopSubtotal,
                 'shipping_total'  => $shopShipping,
                 'discount_total'  => $shopDiscount,
+                'tax_total'       => $shopTax,
                 'grand_total'     => $shopGrandTotal,
                 'order_status'    => $order->order_status,
                 'payment_status'  => $isCod ? 'COD' : 'PENDING',
@@ -260,6 +279,7 @@ class OrderService
                 'shop_id'            => (string) $shopOrder->shop_id,
                 'subtotal'           => (float) $shopOrder->subtotal,
                 'discount_total'     => (float) $shopOrder->discount_total,
+                'tax_total'          => (float) $shopOrder->tax_total,
                 'shipping_total'     => (float) $shopOrder->shipping_total,
                 'grand_total'        => (float) $shopOrder->grand_total,
                 'status'             => OrderStatus::tryFrom((int) $shopOrder->order_status)?->name ?? '',
