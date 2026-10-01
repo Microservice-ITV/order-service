@@ -301,8 +301,8 @@ SELECT
 FROM checkout_sessions cs
 JOIN checkout_items ci ON ci.checkout_id = cs.id
 LEFT JOIN orders o ON o.checkout_id = cs.id
-LEFT JOIN order_statuses checkout_status ON checkout_status.id = cs.status_id
-LEFT JOIN order_statuses order_status ON order_status.id = o.status_id
+LEFT JOIN statuses checkout_status ON checkout_status.id = cs.status_id
+LEFT JOIN statuses order_status ON order_status.id = o.status_id
 WHERE cs.id = '720c65cf-acba-11f1-a205-8e985e8a7e37';
 ```
 

@@ -45,6 +45,16 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/orderservice-app:latest
             ${{ secrets.DOCKER_USERNAME }}/orderservice-app:${{ github.sha }}
 
+      - name: 🏗️ Build & Push Status gRPC Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./grpc-status
+          file: ./grpc-status/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/orderservice-status-grpc:latest
+            ${{ secrets.DOCKER_USERNAME }}/orderservice-status-grpc:${{ github.sha }}
+
   #####################################################
   # DEPLOY TO VPS
   #####################################################
@@ -285,6 +295,21 @@ jobs:
 
             docker exec orderservice-php php artisan config:clear
 
+            echo "🔎 Waiting for order-status gRPC adapter health..."
+            STATUS_GRPC_HEALTHY=0
+            for attempt in $(seq 1 12); do
+              if docker exec orderservice-status-grpc node -e "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+                STATUS_GRPC_HEALTHY=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$STATUS_GRPC_HEALTHY" != "1" ]; then
+              docker logs --tail=100 orderservice-status-grpc
+              echo "❌ Order status gRPC adapter did not become healthy"
+              exit 1
+            fi
+
             echo "🔍 Effective service endpoints inside the app:"
             docker exec orderservice-php php artisan tinker --execute="dump(config('services.product.url'), config('services.payment.url'), config('services.promotion.url'), config('queue.default'));"
 
@@ -339,7 +364,7 @@ jobs:
 
             echo "📊 Consumer / saga worker status..."
 
-            for c in orderservice-consumer orderservice-saga-manager orderservice-saga-stats; do
+            for c in orderservice-consumer orderservice-saga-manager orderservice-saga-stats orderservice-status-grpc; do
               printf '%s: %s\n' "$c" \
                 "$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo 'missing')"
             done

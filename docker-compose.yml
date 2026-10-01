@@ -46,6 +46,26 @@ services:
     networks:
       - app-network
 
+  order-status-grpc:
+    build:
+      context: ./grpc-status
+      dockerfile: Dockerfile
+    container_name: orderservice-status-grpc
+    restart: unless-stopped
+    environment:
+      GRPC_PORT: 50051
+      HEALTH_PORT: 8080
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      order-mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
   order-mysql:
     image: mysql:8.0
     container_name: orderservice-mysql
