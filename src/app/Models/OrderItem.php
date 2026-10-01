@@ -30,6 +30,7 @@ class OrderItem extends Model
         'product_description',
         'product_sku',
         'category_id',
+        'tax_amount',
         'shop_id',
         'shop_order_id',
         'discount_amount',

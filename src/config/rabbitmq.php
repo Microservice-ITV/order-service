@@ -19,5 +19,6 @@ return [
         'payment_failed' => env('RABBITMQ_QUEUE_PAYMENT_FAILED'),
         'payment_collected' => env('RABBITMQ_QUEUE_PAYMENT_COLLECTED'),
         'shipment_delivered' => env('RABBITMQ_QUEUE_SHIPMENT_DELIVERED'),
+        'tax_charges' => env('RABBITMQ_QUEUE_TAX_CHARGES', 'order_service.tax.charges.queue'),
     ],
 ];

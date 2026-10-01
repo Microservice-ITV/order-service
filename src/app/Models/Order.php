@@ -27,6 +27,9 @@ class Order extends Model
         'subtotal',
         'shipping_total',
         'discount_total',
+        'tax_amount',
+        'taxable_amount',
+        'tax_enabled',
         'grand_total',
         'payment_status',
         'courier_code',
@@ -44,6 +47,9 @@ class Order extends Model
         'subtotal' => 'decimal:2',
         'shipping_total' => 'decimal:2',
         'discount_total' => 'decimal:2',
+        'tax_amount' => 'decimal:2',
+        'taxable_amount' => 'decimal:2',
+        'tax_enabled' => 'boolean',
         'grand_total' => 'decimal:2',
     ];
 

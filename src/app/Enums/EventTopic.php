@@ -26,6 +26,7 @@ enum EventTopic: string
     case ORDER_FAILED = 'order.failed';
     case SHIPMENT_CREATED = 'shipment.created';
     case SHIPMENT_DELIVERED = 'shipment.delivered';
+    case TAX_CHARGES_UPDATED = 'tax.charges.updated';
 
     // Saga orchestration events
     case SAGA_ORDER_CREATED = 'saga.order.created';

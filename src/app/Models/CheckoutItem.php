@@ -31,6 +31,8 @@ class CheckoutItem extends Model
         'product_description',
         'product_sku',
         'category_id',
+        'tax_rate',
+        'tax_amount',
         'shop_id',
         'image_url',
         'currency',
