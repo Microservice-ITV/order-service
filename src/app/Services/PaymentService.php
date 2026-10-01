@@ -158,13 +158,17 @@ final class PaymentService
     public function updatePaymentIntentAmount(
         string $checkoutId,
         float $amount,
-        ?string $currency = null
+        ?string $currency = null,
+        ?string $paymentMethod = null,
     ): array {
         $baseUrl = rtrim((string) config('services.payment.url'), '/');
 
         $payload = ['amount' => $amount];
         if ($currency !== null) {
             $payload['currency'] = $currency;
+        }
+        if ($paymentMethod !== null && $paymentMethod !== '') {
+            $payload['payment_method'] = $paymentMethod;
         }
 
         logger()->info('PAYMENT_INTENT_UPDATE_REQUEST', [

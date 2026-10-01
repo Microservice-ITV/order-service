@@ -47,6 +47,7 @@ class CheckoutController extends Controller
                 'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
                 'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
                 'promo_code' => ['nullable', 'string', 'max:64'],
+                'payment_method' => ['nullable', 'string', 'in:prepaid,cod'],
             ]));
 
             if (!array_key_exists('shipping_total', $validated)) {
@@ -62,6 +63,9 @@ class CheckoutController extends Controller
                 $promoCode = $trimmed !== '' ? $trimmed : null;
             }
             unset($validated['promo_code']);
+
+            $paymentMethod = $validated['payment_method'] ?? null;
+            unset($validated['payment_method']);
 
             $shopShippings = null;
             if (
@@ -85,6 +89,7 @@ class CheckoutController extends Controller
                 shippingTotal: $shippingTotal,
                 shopShippings: $shopShippings,
                 promoCode: $promoCode,
+                paymentMethod: $paymentMethod,
             );
 
             if ($result['not_found'] === true) {

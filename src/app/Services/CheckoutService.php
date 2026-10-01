@@ -456,6 +456,7 @@ class CheckoutService
         ?float $shippingTotal = null,
         ?array $shopShippings = null,
         ?string $promoCode = null,
+        ?string $paymentMethod = null,
     ): array {
         /** @var ?CheckoutSession $checkout */
         $checkout = $this->checkoutSessions->findById($checkoutId);
@@ -464,6 +465,17 @@ class CheckoutService
                 'not_found' => true,
                 'invalid_state' => false,
                 'status' => null,
+                'address_updated_at' => null,
+            ];
+        }
+
+        $effectivePaymentMethod = $paymentMethod ?? ($checkout->payment_method ?: 'prepaid');
+        if (!in_array($effectivePaymentMethod, ['prepaid', 'cod'], true)) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => 'invalid_payment_method',
+                'status' => $checkout->status_id->name,
                 'address_updated_at' => null,
             ];
         }
@@ -627,7 +639,8 @@ class CheckoutService
                 $paymentResult = $this->paymentService->updatePaymentIntentAmount(
                     $checkoutId,
                     $grandTotal,
-                    $currency
+                    $currency,
+                    $effectivePaymentMethod,
                 );
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_PAYMENT_INTENT_UPDATE_FAILED', [
@@ -657,7 +670,8 @@ class CheckoutService
                     $normalizedShopShippings,
                     $paymentResult,
                     $promotionQuote,
-                    $taxQuote
+                    $taxQuote,
+                    $effectivePaymentMethod,
                 ): void {
                     $updated = $this->checkoutSessions->updateWhere(
                         [['id', '=', $checkoutId]],
@@ -673,6 +687,7 @@ class CheckoutService
                             'tax_snapshot' => $taxQuote,
                             'total' => $grandTotal,
                             'client_secret' => $paymentResult['client_secret'],
+                            'payment_method' => $effectivePaymentMethod,
                             'updated_at' => $updatedAt,
                         ]
                     );
@@ -737,6 +752,7 @@ class CheckoutService
             }
 
             try {
+                $checkout->payment_method = $effectivePaymentMethod;
                 $this->authorizeCodPaymentIfNeeded($checkout);
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_COD_AUTHORIZE_FAILED', [
