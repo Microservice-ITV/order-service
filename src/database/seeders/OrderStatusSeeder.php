@@ -11,7 +11,7 @@ class OrderStatusSeeder extends Seeder
     public function run(): void
     {
         foreach (OrderStatus::cases() as $status) {
-            DB::table('order_statuses')->updateOrInsert(
+            DB::table('statuses')->updateOrInsert(
                 ['id' => $status->value],
                 ['name' => $status->name]
             );

@@ -38,6 +38,33 @@ services:
       - app-network
 
   ###############################################################
+  # Internal gRPC lookup for canonical order statuses.
+  ###############################################################
+  order-status-grpc:
+    image: ${ORDER_STATUS_GRPC_IMAGE:-itvmicroservicesteam/orderservice-status-grpc}:latest
+    container_name: orderservice-status-grpc
+    restart: always
+    environment:
+      GRPC_PORT: 50051
+      HEALTH_PORT: 8080
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+
+  ###############################################################
   # Event consumer — php artisan consume:all as a long-running
   # background process (mirrors docker-compose.yml order-consumer).
   # The broker is declared below (service `rabbitmq`, container_name
