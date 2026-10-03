@@ -469,7 +469,7 @@ class CheckoutService
             ];
         }
 
-        $effectivePaymentMethod = $paymentMethod ?? ($checkout->payment_method ?: 'prepaid');
+        $effectivePaymentMethod = $paymentMethod ?? ($checkout->payment_method ?: 'cod');
         if (!in_array($effectivePaymentMethod, ['prepaid', 'cod'], true)) {
             return [
                 'not_found' => false,
@@ -829,7 +829,7 @@ class CheckoutService
      */
     private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout): void
     {
-        if (($checkout->payment_method ?? 'prepaid') !== 'cod') {
+        if (($checkout->payment_method ?? 'cod') !== 'cod') {
             return;
         }
 
@@ -1039,7 +1039,7 @@ class CheckoutService
         string $userId,
         string $rawIdempotencyKey,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid',
+        string $paymentMethod = 'cod',
         ?array $customerMeta = null,
     ): array
     {
@@ -1098,7 +1098,7 @@ class CheckoutService
         string $userId,
         string $idempotencyHash,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid',
+        string $paymentMethod = 'cod',
         ?array $customerMeta = null,
     ): CheckoutSession
     {

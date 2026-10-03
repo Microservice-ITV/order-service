@@ -175,7 +175,7 @@ class SagaCheckoutController extends Controller
                 (string) $request->input('user_id'),
                 $request->input('idempotency_key'),
                 $request->input('delivery_address'),
-                (string) ($request->input('payment_method') ?? 'prepaid'),
+                (string) ($request->input('payment_method') ?? 'cod'),
                 $customerMeta,
             );
 

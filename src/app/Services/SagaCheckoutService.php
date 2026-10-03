@@ -53,7 +53,7 @@ class SagaCheckoutService
         string $userId,
         string $rawIdempotencyKey,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid',
+        string $paymentMethod = 'cod',
         ?array $customerMeta = null,
     ): array
     {
