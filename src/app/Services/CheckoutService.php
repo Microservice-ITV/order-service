@@ -437,15 +437,15 @@ class CheckoutService
      *   reason?: string,
      *   payment_update_failed?: bool,
      *   payment_error?: string,
-    *   promotion_error?: string,
+     *   promotion_error?: string,
      *   status: ?string,
      *   address_updated_at: ?string,
      *   grand_total?: float,
      *   shipping_total?: float,
-    *   promotion_discount_total?: float,
-    *   promo_code?: ?string,
-    *   promo_code_status?: ?string,
-    *   promo_code_message?: ?string,
+     *   promotion_discount_total?: float,
+     *   promo_code?: ?string,
+     *   promo_code_status?: ?string,
+     *   promo_code_message?: ?string,
      *   client_secret?: string,
      *   shop_shippings?: list<array{shop_id: string, shipping_fee: float}>
      * }
@@ -571,7 +571,7 @@ class CheckoutService
                     shippingByShop: $normalizedShopShippings === null
                         ? null
                         : array_map(
-                            static fn (array $row): array => [
+                            static fn(array $row): array => [
                                 'shop_id' => (string) $row['shop_id'],
                                 'amount' => (float) $row['shipping_fee'],
                             ],
@@ -930,8 +930,8 @@ class CheckoutService
             ->where('checkout_id', $checkoutId)
             ->get()
             ->pluck('shop_id')
-            ->filter(static fn ($s) => $s !== null && $s !== '')
-            ->map(static fn ($s) => (string) $s)
+            ->filter(static fn($s) => $s !== null && $s !== '')
+            ->map(static fn($s) => (string) $s)
             ->unique()
             ->values()
             ->all();
@@ -947,7 +947,7 @@ class CheckoutService
         $feeShops = array_column($normalizedRows, 'shop_id');
         $missingShopIds = array_values(array_filter(
             $cartShops,
-            static fn (string $sid): bool => !in_array($sid, $feeShops, true)
+            static fn(string $sid): bool => !in_array($sid, $feeShops, true)
         ));
         if ($missingShopIds !== []) {
             return [
@@ -960,7 +960,7 @@ class CheckoutService
 
         $unknownShopIds = array_values(array_filter(
             $feeShops,
-            static fn (string $sid): bool => !in_array($sid, $cartShops, true)
+            static fn(string $sid): bool => !in_array($sid, $cartShops, true)
         ));
         if ($unknownShopIds !== []) {
             return [
@@ -1041,8 +1041,7 @@ class CheckoutService
         ?array $deliveryAddress = null,
         string $paymentMethod = 'cod',
         ?array $customerMeta = null,
-    ): array
-    {
+    ): array {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
         }
@@ -1061,7 +1060,7 @@ class CheckoutService
         if ($validationData['stockValid'] !== true) {
             $invalidItems = array_values(array_filter(
                 $validationData['items'] ?? [],
-                static fn ($row) => !is_array($row) || !($row['stock_validation'] ?? false)
+                static fn($row) => !is_array($row) || !($row['stock_validation'] ?? false)
             ));
             throw new BusinessException('OUT_OF_STOCK', 400, ['items' => $invalidItems]);
         }
@@ -1100,8 +1099,7 @@ class CheckoutService
         ?array $deliveryAddress = null,
         string $paymentMethod = 'cod',
         ?array $customerMeta = null,
-    ): CheckoutSession
-    {
+    ): CheckoutSession {
         return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod, $customerMeta) {
             $now = now();
 
@@ -1207,7 +1205,7 @@ class CheckoutService
 
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
+            static fn(float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
             0.0
         );
 
