@@ -279,6 +279,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 // Promotion usage commit payload (consumed by promotion-service)
                 'promotion_ids' => array_values($promotionSnapshot['promotion_ids'] ?? []),
                 'promotion_discount_total' => (float) ($checkout->promotion_discount_total ?? 0),
+                'bundle_discount' => (float) ($order->bundle_discount ?? 0),
                 'applied_rewards' => array_values($promotionSnapshot['applied_rewards'] ?? []),
                 'promo_code' => $promotionSnapshot['promo_code'] ?? null,
                 // Per-shop attribution so the read side can render each shop's

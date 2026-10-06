@@ -133,6 +133,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
         );
         $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
         $discountTotal = round((float) ($checkout->promotion_discount_total ?? 0), 2);
+        $bundleDiscount = round((float) ShopOrder::where('order_id', $orderId)->sum('bundle_discount'), 2);
         $grandTotal = round((float) ($checkout->total ?? max(0, $subtotal + $shippingTotal - $discountTotal)), 2);
         $currency = 'USD';
         if ($eventItems !== []) {
@@ -150,6 +151,7 @@ class ConsumeProductStockConfirmed extends BaseConsumer
             'subtotal' => round($subtotal, 2),
             'shipping_total' => $shippingTotal,
             'promotion_discount_total' => $discountTotal,
+            'bundle_discount' => $bundleDiscount,
             'total' => $grandTotal,
             'currency' => $currency,
             // Per-shop attribution so the read side can render each shop's
