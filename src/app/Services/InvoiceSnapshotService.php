@@ -19,11 +19,19 @@ final class InvoiceSnapshotService
      *   orderId: string,
      *   checkoutId: string,
      *   customerId: string,
+    *   customerName: string|null,
+    *   customerEmail: string|null,
+    *   customerPhone: string|null,
+    *   billingAddress: array<string, mixed>|null,
+    *   shippingAddress: array<string, mixed>|null,
+    *   paymentStatus: string|null,
+    *   paymentMethod: string|null,
      *   items: list<array{
      *     orderItemId: string,
      *     productId: string,
      *     productName: string|null,
      *     productSku: string|null,
+     *     imageUrl: string|null,
      *     quantity: int,
      *     unitPrice: string,
      *     lineTotal: string|null,
@@ -54,6 +62,13 @@ final class InvoiceSnapshotService
         }
 
         $items = $checkout->items;
+        $deliveryAddress = is_array($checkout->delivery_address)
+            ? $checkout->delivery_address
+            : [];
+        $billingAddress = is_array($deliveryAddress['billing_address'] ?? null)
+            ? $deliveryAddress['billing_address']
+            : null;
+        $shippingAddress = $deliveryAddress !== [] ? $deliveryAddress : null;
 
         $currency = $items
             ->pluck('currency')
@@ -78,6 +93,13 @@ final class InvoiceSnapshotService
             'orderId' => (string) $order->order_id,
             'checkoutId' => (string) $checkout->id,
             'customerId' => (string) $checkout->user_id,
+            'customerName' => $this->firstNonEmptyString($deliveryAddress, ['full_name', 'recipient_name', 'name']),
+            'customerEmail' => $this->firstNonEmptyString($deliveryAddress, ['email', 'recipient_email']),
+            'customerPhone' => $this->firstNonEmptyString($deliveryAddress, ['phone', 'phone_number', 'recipient_phone']),
+            'billingAddress' => $billingAddress,
+            'shippingAddress' => $shippingAddress,
+            'paymentStatus' => (string) ($order->payment_status ?? ''),
+            'paymentMethod' => (string) ($checkout->payment_method ?? ''),
 
             'items' => $items
                 ->map(static fn($item): array => [
@@ -88,6 +110,9 @@ final class InvoiceSnapshotService
                         : null,
                     'productSku' => $item->product_sku !== null
                         ? (string) $item->product_sku
+                        : null,
+                    'imageUrl' => $item->image_url !== null
+                        ? (string) $item->image_url
                         : null,
                     'quantity' => (int) $item->qty,
                     'unitPrice' => (string) $item->price,
@@ -132,5 +157,18 @@ final class InvoiceSnapshotService
                 ''
             ),
         ];
+    }
+
+    /** @param array<string, mixed> $source @param list<string> $keys */
+    private function firstNonEmptyString(array $source, array $keys): ?string
+    {
+        foreach ($keys as $key) {
+            $value = $source[$key] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
     }
 }

@@ -50,12 +50,15 @@ class OrderService
      * Also creates shop_orders and assigns shop_order_id to each order_item.
      * Runs inside the same transaction as order creation (idempotent per order).
      */
-    public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): void
+    public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): array
     {
+        $orderItemIds = [];
         $rows = $checkout->items
-            ->map(function (CheckoutItem $item) use ($order): array {
+            ->map(function (CheckoutItem $item) use ($order, &$orderItemIds): array {
+                $orderItemId = (string) Str::uuid();
+                $orderItemIds[(string) $item->id] = $orderItemId;
                 return [
-                    'id'      => (string) Str::uuid(),
+                    'id'      => $orderItemId,
                     'order_id'            => $order->order_id,
                     'product_id'          => $item->product_id,
                     'variant_id'          => $item->variant_id,
@@ -80,13 +83,15 @@ class OrderService
             ->all();
 
         if ($rows === []) {
-            return;
+            return [];
         }
 
         OrderItem::insert($rows);
 
         // Create shop_orders and assign shop_order_id to order_items
         $this->createShopOrders($rows, $checkout, $order);
+
+        return $orderItemIds;
     }
 
     /**

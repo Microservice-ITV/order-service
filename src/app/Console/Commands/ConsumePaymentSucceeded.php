@@ -110,6 +110,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 return;
             }
 
+            $orderItemIds = [];
             DB::transaction(function () use (
                 $checkoutId,
                 $paymentId,
@@ -118,7 +119,8 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 $checkoutService,
                 $orderService,
                 $checkout,
-                &$order
+                &$order,
+                &$orderItemIds
             ) {
                 /**
                  * Confirm checkout (IDEMPOTENT)
@@ -147,7 +149,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                  * Snapshot checkout line items into order_items so the order
                  * carries its own per-product records (same transaction).
                  */
-                $orderService->snapshotCheckoutItems($checkout, $order);
+                $orderItemIds = $orderService->snapshotCheckoutItems($checkout, $order);
 
                 /**
                  * Attach payment (optional, idempotent)
@@ -231,11 +233,13 @@ class ConsumePaymentSucceeded extends BaseConsumer
              * records for the order. Mirrors the order_items snapshot.
              */
             $items = $checkout->items
-                ->map(function (CheckoutItem $item): array {
+                ->map(function (CheckoutItem $item) use ($orderItemIds): array {
                     $unitPrice = (float) ($item->price ?? 0);
                     $subtotal = (float) ($item->line_total ?? $unitPrice * (int) ($item->qty ?? 0));
+                    $orderItemId = $orderItemIds[(string) $item->id] ?? '';
 
                     return [
+                        'id'             => $orderItemId,
                         'productId'      => (string) $item->product_id,
                         'variantId'      => $item->variant_id !== null && $item->variant_id !== ''
                             ? (string) $item->variant_id
@@ -263,6 +267,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 'checkout_id'    => $checkoutId,
                 'user_id'        => (string) $checkout->user_id,
                 'status'         => 'ORDER_PAID',
+                'payment_status' => ($checkout->payment_method ?? '') === 'cod' ? 'COD' : 'PAID',
                 'payment_id'     => $paymentId,
                 'transaction_id' => $transactionId,
                 'amount'         => $amount,
