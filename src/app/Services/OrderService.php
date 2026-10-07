@@ -9,6 +9,7 @@ use App\Models\CheckoutSession;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\ShopOrder;
+use App\Support\BundleDiscountParts;
 use App\Support\PromotionAllocationSplitter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -25,7 +26,8 @@ class OrderService
         $checkout->loadMissing('items');
         $totalSubtotal = (float) ($checkout->items->sum('line_total') ?? 0);
         $shippingTotal = (float) ($checkout->shipping_total ?? 0);
-        $discountTotal = (float) ($checkout->promotion_discount_total ?? 0);
+        $discountParts = $this->discountParts($checkout);
+        $taxAmount = (float) ($checkout->tax_amount ?? 0);
         $grandTotal = (float) ($checkout->total ?? 0);
         $isCod = ($checkout->payment_method ?? '') === 'cod';
 
@@ -39,7 +41,11 @@ class OrderService
             'currency'       => 'USD',
             'subtotal'       => $totalSubtotal,
             'shipping_total' => $shippingTotal,
-            'discount_total' => $discountTotal,
+            'discount_total' => $discountParts['promo_total'],
+            'bundle_discount' => $discountParts['bundle_total'],
+            'tax_amount'     => $taxAmount,
+            'taxable_amount' => (float) ($checkout->taxable_amount ?? 0),
+            'tax_enabled'    => (bool) ($checkout->tax_enabled ?? true),
             'grand_total'    => $grandTotal,
             'payment_status' => $isCod ? 'COD' : 'PENDING',
         ]);
@@ -53,32 +59,64 @@ class OrderService
     public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): array
     {
         $orderItemIds = [];
+
+        $taxLines = [];
+        foreach (is_array($checkout->tax_snapshot['lines'] ?? null) ? $checkout->tax_snapshot['lines'] : [] as $line) {
+            if (is_array($line) && isset($line['line_id'])) {
+                $taxLines[(string) $line['line_id']] = $line;
+            }
+        }
+
+        $discountParts = $this->discountParts($checkout);
+        $promoByLine = $discountParts['bundle_total'] > 0
+            ? BundleDiscountParts::promoAmountByLine(
+                $checkout->items->map(static fn(CheckoutItem $item): array => [
+                    'id' => (string) $item->id,
+                    'shop_id' => (string) ($item->shop_id ?? ''),
+                    'line_total' => (float) ($item->line_total ?? 0),
+                ])->all(),
+                is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [],
+                $discountParts,
+            )
+            : null;
+
         $rows = $checkout->items
-            ->map(function (CheckoutItem $item) use ($order, &$orderItemIds): array {
+            ->map(function (CheckoutItem $item) use ($order, $taxLines, $promoByLine, &$orderItemIds): array {
                 $orderItemId = (string) Str::uuid();
                 $orderItemIds[(string) $item->id] = $orderItemId;
+
+                $taxLine = $taxLines[(string) $item->id] ?? [];
+                $storedTax = round((float) ($item->tax_amount ?? 0), 2);
+                $snapshotTax = round((float) ($taxLine['tax_amount'] ?? 0), 2);
+
+                $discountAmount = $promoByLine !== null
+                    ? (float) ($promoByLine[(string) $item->id] ?? 0)
+                    : (float) ($taxLine['discount_allocated'] ?? 0);
+
                 return [
-                    'id'      => $orderItemId,
-                    'order_id'            => $order->order_id,
-                    'product_id'          => $item->product_id,
-                    'variant_id'          => $item->variant_id,
-                    'qty'                 => $item->qty,
-                    'price'               => $item->price,
-                    'subtotal'          => $item->line_total,
-                    'available_stock'     => $item->available_stock,
-                    'product_slug'        => $item->product_slug,
-                    'product_title'       => $item->product_title,
+                    'id' => $orderItemId,
+                    'order_id' => $order->order_id,
+                    'product_id' => $item->product_id,
+                    'variant_id' => $item->variant_id,
+                    'qty' => $item->qty,
+                    'price' => $item->price,
+                    'subtotal' => $item->line_total,
+                    'available_stock' => $item->available_stock,
+                    'product_slug' => $item->product_slug,
+                    'product_title' => $item->product_title,
                     'product_description' => $item->product_description,
-                    'product_sku'         => $item->product_sku,
-                    'category_id'         => $item->category_id,
-                    'shop_id'             => $item->shop_id,
-                    'image_url'           => $item->image_url,
-                    'currency'            => $item->currency,
-                    'created_at'          => now(),
-                    'updated_at'          => now(),
+                    'product_sku' => $item->product_sku,
+                    'category_id' => $item->category_id,
+                    'tax_amount' => $storedTax > 0 ? $storedTax : $snapshotTax,
+                    'discount_amount' => $discountAmount,
+                    'shop_id' => $item->shop_id,
+                    'image_url' => $item->image_url,
+                    'currency' => $item->currency,
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ];
             })
-            ->filter(fn (array $row): bool => $row['product_id'] !== null && $row['product_id'] !== '')
+            ->filter(fn(array $row): bool => $row['product_id'] !== null && $row['product_id'] !== '')
             ->values()
             ->all();
 
@@ -88,7 +126,6 @@ class OrderService
 
         OrderItem::insert($rows);
 
-        // Create shop_orders and assign shop_order_id to order_items
         $this->createShopOrders($rows, $checkout, $order);
 
         return $orderItemIds;
@@ -104,10 +141,11 @@ class OrderService
         foreach ($rows as $row) {
             $shopId = $row['shop_id'];
             if (!isset($shopGroups[$shopId])) {
-                $shopGroups[$shopId] = ['items' => [], 'subtotal' => 0];
+                $shopGroups[$shopId] = ['items' => [], 'subtotal' => 0, 'tax_total' => 0];
             }
             $shopGroups[$shopId]['items'][] = $row;
             $shopGroups[$shopId]['subtotal'] += (float) $row['subtotal'];
+            $shopGroups[$shopId]['tax_total'] = ($shopGroups[$shopId]['tax_total'] ?? 0) + (float) ($row['tax_amount'] ?? 0);
         }
 
         $shopIds = array_keys($shopGroups);
@@ -117,22 +155,13 @@ class OrderService
         }
 
         $shippingTotal = (float) ($checkout->shipping_total ?? 0);
-        $discountTotal = (float) ($checkout->promotion_discount_total ?? 0);
+        $discountParts = $this->discountParts($checkout);
+        $snapshot = is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [];
 
-        // Prefer the quote's per-shop discount allocations (exact attribution:
-        // a shop-scoped promo only discounts its own shop). Legacy snapshots
-        // without allocations fall back to subtotal-proportional splitting.
-        // Both paths sum exactly to the order-level discount so that
-        // Σ shop grand totals equals the charged order total.
-        $allocations = is_array($checkout->promotion_snapshot['allocations'] ?? null)
-            ? $checkout->promotion_snapshot['allocations']
-            : [];
-        $discountByShop = PromotionAllocationSplitter::splitPerShop(
-            $allocations,
-            $shopIds,
-            $shopSubtotals,
-            $discountTotal,
-        );
+        // Promotion discounts stay in discount_total. Bundle savings are stored
+        // on bundle_discount and are not written onto order items. Both are
+        // subtracted from the shop grand total so it still matches the charge.
+        $splitByShop = BundleDiscountParts::perShop($snapshot, $discountParts, $shopIds, $shopSubtotals);
         $shippingByShop = PromotionAllocationSplitter::proportional(
             $shopIds,
             $shopSubtotals,
@@ -144,8 +173,10 @@ class OrderService
         foreach ($shopGroups as $shopId => $group) {
             $shopSubtotal = $shopSubtotals[$shopId];
             $shopShipping = $shippingByShop[$shopId];
-            $shopDiscount = $discountByShop[$shopId];
-            $shopGrandTotal = round($shopSubtotal + $shopShipping - $shopDiscount, 2);
+            $shopDiscount = $splitByShop['promo'][$shopId] ?? 0;
+            $shopBundle = $splitByShop['bundle'][$shopId] ?? 0;
+            $shopTax = round((float) ($group['tax_total'] ?? 0), 2);
+            $shopGrandTotal = round($shopSubtotal + $shopShipping - $shopDiscount - $shopBundle + $shopTax, 2);
 
             $shopOrder = ShopOrder::create([
                 'id'              => (string) Str::uuid(),
@@ -154,6 +185,8 @@ class OrderService
                 'subtotal'        => $shopSubtotal,
                 'shipping_total'  => $shopShipping,
                 'discount_total'  => $shopDiscount,
+                'bundle_discount' => $shopBundle,
+                'tax_total'       => $shopTax,
                 'grand_total'     => $shopGrandTotal,
                 'order_status'    => $order->order_status,
                 'payment_status'  => $isCod ? 'COD' : 'PENDING',
@@ -249,10 +282,21 @@ class OrderService
     }
 
     /**
+     * @return array{bundle_total: float, promo_total: float, bundle_ids: array<string, true>}
+     */
+    private function discountParts(CheckoutSession $checkout): array
+    {
+        return BundleDiscountParts::fromSnapshot(
+            is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [],
+            (float) ($checkout->promotion_discount_total ?? 0),
+        );
+    }
+
+    /**
      * Per-shop financial breakdown of an order, for downstream projections
      * (ecommerce-read-service) and seller-facing order pages.
      *
-     * @return list<array{shop_order_id: string, shop_id: string, subtotal: float, discount_total: float, shipping_total: float, grand_total: float}>
+     * @return list<array{shop_order_id: string, shop_id: string, subtotal: float, discount_total: float, bundle_discount: float, shipping_total: float, grand_total: float}>
      */
     public function shopBreakdown(string $orderId): array
     {
@@ -260,17 +304,19 @@ class OrderService
             ->where('order_id', $orderId)
             ->orderBy('created_at')
             ->get()
-            ->map(static fn (ShopOrder $shopOrder): array => [
+            ->map(static fn(ShopOrder $shopOrder): array => [
                 'shop_order_id'      => (string) $shopOrder->id,
                 'shop_id'            => (string) $shopOrder->shop_id,
                 'subtotal'           => (float) $shopOrder->subtotal,
                 'discount_total'     => (float) $shopOrder->discount_total,
+                'bundle_discount'    => (float) $shopOrder->bundle_discount,
+                'tax_total'          => (float) $shopOrder->tax_total,
                 'shipping_total'     => (float) $shopOrder->shipping_total,
                 'grand_total'        => (float) $shopOrder->grand_total,
                 'status'             => OrderStatus::tryFrom((int) $shopOrder->order_status)?->name ?? '',
                 'tracking_number'    => $shopOrder->tracking_number,
                 'courier_name'       => $shopOrder->courier_name,
-                'shipment_created_at'=> $shopOrder->shipment_created_at?->toIso8601String(),
+                'shipment_created_at' => $shopOrder->shipment_created_at?->toIso8601String(),
             ])
             ->values()
             ->all();

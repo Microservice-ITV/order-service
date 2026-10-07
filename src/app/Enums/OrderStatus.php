@@ -19,5 +19,10 @@ enum OrderStatus: int
     case READY_FOR_FULFILLMENT = 13;
     case SHIPPED = 14;
     case DELIVERED = 15;
+    case SCHEDULED = 16;
+    case ENDED = 17;
+    case DRAFT = 18;
+    case PAUSED = 20;
+    case ACTIVE = 21;
 }
 

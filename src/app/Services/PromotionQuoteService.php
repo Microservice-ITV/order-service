@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CheckoutItem;
+use App\Support\CoveredBundleSavings;
 use Illuminate\Support\Facades\Http;
 
 final class PromotionQuoteService
@@ -17,6 +18,7 @@ final class PromotionQuoteService
      *   final_total:float,
      *   applied_rewards:array<int,array<string,mixed>>,
      *   allocations:array<int,array<string,mixed>>,
+     *   bundle_savings:array<int,array<string,mixed>>,
      *   promo_code:?string,
      *   promo_code_status:?string,
      *   promo_code_message:?string
@@ -88,7 +90,7 @@ final class PromotionQuoteService
             throw new \RuntimeException('Invalid promotion quote response');
         }
 
-        return [
+        $quote = [
             'checkout_id' => $checkoutId,
             'promotion_ids' => array_values(array_map('strval', is_array($payload['promotion_ids'] ?? null) ? $payload['promotion_ids'] : [])),
             'discount_total' => round((float) $payload['discount_total'], 2),
@@ -96,6 +98,7 @@ final class PromotionQuoteService
             'final_total' => round((float) $payload['final_total'], 2),
             'applied_rewards' => is_array($payload['applied_rewards'] ?? null) ? $payload['applied_rewards'] : [],
             'allocations' => $this->normalizeAllocations(is_array($payload['allocations'] ?? null) ? $payload['allocations'] : []),
+            'bundle_savings' => $this->normalizeBundleSavings(is_array($payload['bundle_savings'] ?? null) ? $payload['bundle_savings'] : []),
             'promo_code' => isset($payload['promo_code']) && is_string($payload['promo_code'])
                 ? strtoupper($payload['promo_code'])
                 : ($normalizedCode !== '' ? $normalizedCode : null),
@@ -106,6 +109,50 @@ final class PromotionQuoteService
                 ? $payload['promo_code_message']
                 : null,
         ];
+
+        return CoveredBundleSavings::merge($quote, $this->matchBundles($items));
+    }
+
+    /**
+     * @param  list<array{product_id: string, shop_id: string, category_id: ?string, unit_price: float, quantity: int}>  $items
+     * @return array<string, mixed>
+     */
+    private function matchBundles(array $items): array
+    {
+        $baseUrl = rtrim((string) config('services.promotion.url'), '/');
+        if ($baseUrl === '' || $items === []) {
+            return [];
+        }
+
+        try {
+            $response = Http::timeout(5)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'X-SERVICE-KEY' => (string) config('services.promotion.api_key'),
+                ])
+                ->post($baseUrl . '/promotions/bundles/match', [
+                    'items' => array_map(static fn (array $item): array => [
+                        'product_id' => $item['product_id'],
+                        'shop_id' => $item['shop_id'],
+                        'unit_price' => $item['unit_price'],
+                        'quantity' => $item['quantity'],
+                        'selected' => true,
+                    ], $items),
+                ]);
+        } catch (\Throwable $e) {
+            logger()->warning('BUNDLE_MATCH_REQUEST_FAILED', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $payload = $response->json();
+        $data = is_array($payload) && is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+
+        return is_array($data) ? $data : [];
     }
 
     /**
@@ -140,7 +187,7 @@ final class PromotionQuoteService
      * Validate/normalize per-shop discount allocations returned by the quote.
      *
      * @param  array<int, mixed>  $allocations
-     * @return list<array{promotion_id: string, promotion_name: string, reward_id: string, shop_id: string, discount_type: string, funded_by: string, amount: float}>
+     * @return list<array{promotion_id: string, promotion_name: string, reward_id: string, shop_id: string, discount_type: string, funded_by: string, amount: float, source: string}>
      */
     private function normalizeAllocations(array $allocations): array
     {
@@ -162,6 +209,34 @@ final class PromotionQuoteService
                 'discount_type' => ((string) ($allocation['discount_type'] ?? 'ITEM')) === 'SHIPPING' ? 'SHIPPING' : 'ITEM',
                 'funded_by' => ((string) ($allocation['funded_by'] ?? 'PLATFORM')) === 'SELLER' ? 'SELLER' : 'PLATFORM',
                 'amount' => $amount,
+                'source' => strtoupper((string) ($allocation['source'] ?? '')) === 'BUNDLE' ? 'BUNDLE' : 'PROMOTION',
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<int, mixed>  $rows
+     * @return list<array{bundle_id: string, title: string, kind: string, amount: float, sets: int}>
+     */
+    private function normalizeBundleSavings(array $rows): array
+    {
+        $result = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $amount = round((float) ($row['amount'] ?? 0), 2);
+            if ($amount <= 0) {
+                continue;
+            }
+            $result[] = [
+                'bundle_id' => (string) ($row['bundle_id'] ?? ''),
+                'title' => (string) ($row['title'] ?? ''),
+                'kind' => (string) ($row['kind'] ?? ''),
+                'amount' => $amount,
+                'sets' => max(0, (int) ($row['sets'] ?? 0)),
             ];
         }
 

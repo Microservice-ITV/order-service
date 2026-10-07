@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package order.v1;
+
+// Read-only lookup for canonical order-service statuses.
+service StatusService {
+  rpc GetStatus (GetStatusRequest) returns (Status);
+  rpc ListStatuses (ListStatusesRequest) returns (ListStatusesResponse);
+}
+
+message GetStatusRequest {
+  oneof lookup {
+    int32 id = 1;
+    string name = 2;
+  }
+}
+
+message Status {
+  int32 id = 1;
+  string name = 2;
+}
+
+message ListStatusesRequest {}
+
+message ListStatusesResponse {
+  repeated Status statuses = 1;
+}

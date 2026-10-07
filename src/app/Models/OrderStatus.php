@@ -6,11 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * OrderStatus represents a status in the order_statuses lookup table.
+ * OrderStatus represents a status in the statuses lookup table.
  */
 class OrderStatus extends Model
 {
-    protected $table = 'order_statuses';
+    protected $table = 'statuses';
     
     public $timestamps = false;
     

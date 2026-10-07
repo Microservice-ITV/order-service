@@ -146,6 +146,13 @@ final class InvoiceSnapshotService
                 ''
             ),
 
+            'taxAmount' => number_format(
+                (float) ($order->tax_amount ?? $checkout->tax_amount ?? 0),
+                2,
+                '.',
+                ''
+            ),
+
             /*
              * CheckoutSession::total is the authoritative final checkout
              * amount and should be used as the invoice grand total.

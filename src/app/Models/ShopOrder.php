@@ -23,6 +23,8 @@ class ShopOrder extends Model
         'subtotal',
         'shipping_total',
         'discount_total',
+        'bundle_discount',
+        'tax_total',
         'grand_total',
         'order_status',
         'payment_status',
@@ -39,6 +41,8 @@ class ShopOrder extends Model
         'subtotal' => 'decimal:2',
         'shipping_total' => 'decimal:2',
         'discount_total' => 'decimal:2',
+        'bundle_discount' => 'decimal:2',
+        'tax_total' => 'decimal:2',
         'grand_total' => 'decimal:2',
         'shipment_created_at' => 'datetime',
     ];

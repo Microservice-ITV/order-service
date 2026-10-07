@@ -119,10 +119,25 @@ class ConsumeProductValidated extends BaseConsumer
                     return;
                 }
             }
-            if (!$checkoutService->applyPromotionQuote($checkoutId, $promotionQuote)) {
-                throw new \RuntimeException('Failed to persist promotion quote');
+            $taxQuoteService = app(\App\Services\TaxQuoteService::class);
+            try {
+                $taxQuote = $taxQuoteService->quote(
+                    $checkoutId,
+                    (float) $promotionQuote['discount_total'],
+                    is_array($promotionQuote['allocations'] ?? null) ? $promotionQuote['allocations'] : [],
+                );
+            } catch (\Throwable $taxError) {
+                logger()->error('TAX_QUOTE_FAILED_CHECKOUT_REJECTED', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $taxError->getMessage(),
+                ]);
+                $checkoutService->reject($checkoutId, 'TAX_QUOTE_FAILED');
+                return;
             }
-            $total = $promotionQuote['final_total'];
+            if (!$checkoutService->applyCommercialQuote($checkoutId, $promotionQuote, $taxQuote)) {
+                throw new \RuntimeException('Failed to persist promotion and tax quote');
+            }
+            $total = round((float) $promotionQuote['final_total'] + (float) $taxQuote['tax_amount'], 2);
         } catch (\Throwable $e) {
             logger()->error('PROMOTION_QUOTE_FAILED_CHECKOUT_REJECTED', [
                 'checkout_id' => $checkoutId,
@@ -180,7 +195,7 @@ class ConsumeProductValidated extends BaseConsumer
                 amount: $total,
                 correlationId: $correlationId,
                 expireAtIso: $expireAtIso,
-                paymentMethod: $checkout->payment_method ?: 'prepaid'
+                paymentMethod: $checkout->payment_method ?: 'cod'
             );
         } catch (\Throwable $e) {
             logger()->error('PAYMENT_INTENT_CREATION_FAILED_STOCK_STILL_CONFIRMED', [

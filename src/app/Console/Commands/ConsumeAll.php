@@ -13,7 +13,7 @@ use Throwable;
 class ConsumeAll extends Command
 {
     protected $signature = 'consume:all';
-    protected $description = 'Run all RabbitMQ consumers on a single connection (1 conn, 6 channels)';
+    protected $description = 'Run all RabbitMQ consumers on a single connection (1 conn, 7 channels)';
 
     private array $consumers = [];
     private array $queues = [];
@@ -56,6 +56,11 @@ class ConsumeAll extends Command
                 'queue' => config('rabbitmq.queues.shipment_delivered'),
                 'routing_keys' => ['shipment.delivered'],
                 'handler' => ConsumeShipmentDelivered::class,
+            ],
+            'consume:tax-charges' => [
+                'queue' => config('rabbitmq.queues.tax_charges'),
+                'routing_keys' => ['tax.charges.updated'],
+                'handler' => ConsumeTaxCharges::class,
             ],
         ];
 

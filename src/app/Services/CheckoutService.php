@@ -26,7 +26,8 @@ class CheckoutService
         private readonly CheckoutItemInterface $checkoutItems,
         private readonly ProductValidationAndPricingService $pricingService,
         private readonly PaymentService $paymentService,
-        private readonly PromotionQuoteService $promotionQuoteService
+        private readonly PromotionQuoteService $promotionQuoteService,
+        private readonly TaxQuoteService $taxQuoteService
     ) {}
 
     /**
@@ -156,6 +157,119 @@ class CheckoutService
         );
 
         return $updated === 1;
+    }
+
+    /**
+     * Persist the promotion quote and the tax snapshot, and set checkout total
+     * to promotion final total plus tax. Shipping is already inside the promotion total.
+     *
+     * @param  array<string, mixed>  $promotionQuote
+     * @param  array<string, mixed>  $taxQuote
+     */
+    public function applyCommercialQuote(string $checkoutId, array $promotionQuote, array $taxQuote): bool
+    {
+        $grandTotal = round((float) ($promotionQuote['final_total'] ?? 0) + (float) ($taxQuote['tax_amount'] ?? 0), 2);
+        $updated = $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'total' => $grandTotal,
+                'shipping_total' => (float) ($promotionQuote['shipping_total'] ?? 0),
+                'promotion_discount_total' => (float) ($promotionQuote['discount_total'] ?? 0),
+                'promotion_snapshot' => $promotionQuote,
+                'tax_amount' => (float) ($taxQuote['tax_amount'] ?? 0),
+                'taxable_amount' => (float) ($taxQuote['taxable_amount'] ?? 0),
+                'tax_enabled' => (bool) ($taxQuote['tax_enabled'] ?? true),
+                'tax_snapshot' => $taxQuote,
+                'updated_at' => now(),
+            ]
+        );
+
+        if ($updated === 1) {
+            $this->persistCheckoutItemTaxes($taxQuote);
+        }
+
+        return $updated === 1;
+    }
+
+    /**
+     * @param  array<int, mixed>  $allocations
+     * @param  array<string, string>  $categoryByProduct
+     * @return array<string, mixed>
+     */
+    public function previewTax(
+        string $checkoutId,
+        float $discountTotal,
+        array $allocations = [],
+        array $categoryByProduct = [],
+    ): array {
+        if ($categoryByProduct !== []) {
+            $items = CheckoutItem::query()->where('checkout_id', $checkoutId)->get();
+            foreach ($items as $item) {
+                $current = trim((string) ($item->category_id ?? ''));
+                if ($current !== '') {
+                    continue;
+                }
+                $categoryId = trim((string) ($categoryByProduct[(string) $item->product_id] ?? ''));
+                if ($categoryId === '') {
+                    continue;
+                }
+                $item->category_id = $categoryId;
+                $item->save();
+            }
+        }
+
+        $quote = $this->taxQuoteService->quote($checkoutId, $discountTotal, $allocations);
+        $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'tax_amount' => (float) ($quote['tax_amount'] ?? 0),
+                'taxable_amount' => (float) ($quote['taxable_amount'] ?? 0),
+                'tax_enabled' => (bool) ($quote['tax_enabled'] ?? true),
+                'tax_snapshot' => json_encode($quote),
+                'updated_at' => now(),
+            ]
+        );
+        $this->persistCheckoutItemTaxes($quote);
+
+        return $quote;
+    }
+
+    /**
+     * Store the quoted rate and charged tax on each checkout line.
+     *
+     * @param  array<string, mixed>  $quote
+     */
+    private function persistCheckoutItemTaxes(array $quote): void
+    {
+        $lines = is_array($quote['lines'] ?? null) ? $quote['lines'] : [];
+        foreach ($lines as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $lineId = trim((string) ($line['line_id'] ?? ''));
+            if ($lineId === '') {
+                continue;
+            }
+            CheckoutItem::query()->where('id', $lineId)->update([
+                'tax_rate' => $line['tax_rate'] ?? null,
+                'tax_amount' => round((float) ($line['tax_amount'] ?? 0), 2),
+            ]);
+        }
+    }
+
+    public function updatePaymentMethod(string $checkoutId, string $paymentMethod): bool
+    {
+        if (!in_array($paymentMethod, ['prepaid', 'cod'], true)) {
+            return false;
+        }
+
+        return $this->checkoutSessions->updateWhere(
+            [['id', '=', $checkoutId]],
+            [
+                'payment_method' => $paymentMethod,
+                'updated_at' => now(),
+            ]
+        ) === 1;
     }
 
     public function markPendingPayment(string $checkoutId): bool
@@ -323,15 +437,15 @@ class CheckoutService
      *   reason?: string,
      *   payment_update_failed?: bool,
      *   payment_error?: string,
-    *   promotion_error?: string,
+     *   promotion_error?: string,
      *   status: ?string,
      *   address_updated_at: ?string,
      *   grand_total?: float,
      *   shipping_total?: float,
-    *   promotion_discount_total?: float,
-    *   promo_code?: ?string,
-    *   promo_code_status?: ?string,
-    *   promo_code_message?: ?string,
+     *   promotion_discount_total?: float,
+     *   promo_code?: ?string,
+     *   promo_code_status?: ?string,
+     *   promo_code_message?: ?string,
      *   client_secret?: string,
      *   shop_shippings?: list<array{shop_id: string, shipping_fee: float}>
      * }
@@ -342,6 +456,7 @@ class CheckoutService
         ?float $shippingTotal = null,
         ?array $shopShippings = null,
         ?string $promoCode = null,
+        ?string $paymentMethod = null,
     ): array {
         /** @var ?CheckoutSession $checkout */
         $checkout = $this->checkoutSessions->findById($checkoutId);
@@ -350,6 +465,17 @@ class CheckoutService
                 'not_found' => true,
                 'invalid_state' => false,
                 'status' => null,
+                'address_updated_at' => null,
+            ];
+        }
+
+        $effectivePaymentMethod = $paymentMethod ?? ($checkout->payment_method ?: 'cod');
+        if (!in_array($effectivePaymentMethod, ['prepaid', 'cod'], true)) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => 'invalid_payment_method',
+                'status' => $checkout->status_id->name,
                 'address_updated_at' => null,
             ];
         }
@@ -445,7 +571,7 @@ class CheckoutService
                     shippingByShop: $normalizedShopShippings === null
                         ? null
                         : array_map(
-                            static fn (array $row): array => [
+                            static fn(array $row): array => [
                                 'shop_id' => (string) $row['shop_id'],
                                 'amount' => (float) $row['shipping_fee'],
                             ],
@@ -484,7 +610,27 @@ class CheckoutService
                 ];
             }
 
-            $grandTotal = $promotionQuote['final_total'];
+            try {
+                $taxQuote = $this->taxQuoteService->quote(
+                    $checkoutId,
+                    (float) $promotionQuote['discount_total'],
+                    is_array($promotionQuote['allocations'] ?? null) ? $promotionQuote['allocations'] : [],
+                );
+            } catch (\Throwable $e) {
+                logger()->error('CHECKOUT_TAX_QUOTE_UPDATE_FAILED', [
+                    'checkout_id' => $checkoutId,
+                    'error' => $e->getMessage(),
+                ]);
+                return [
+                    'not_found' => false,
+                    'invalid_state' => true,
+                    'reason' => 'tax_quote_failed',
+                    'status' => $checkout->status_id->name,
+                    'address_updated_at' => null,
+                ];
+            }
+
+            $grandTotal = round((float) $promotionQuote['final_total'] + (float) $taxQuote['tax_amount'], 2);
 
             $firstItem = CheckoutItem::query()->where('checkout_id', $checkoutId)->first();
             $currency = $firstItem && $firstItem->currency ? (string) $firstItem->currency : 'USD';
@@ -493,7 +639,8 @@ class CheckoutService
                 $paymentResult = $this->paymentService->updatePaymentIntentAmount(
                     $checkoutId,
                     $grandTotal,
-                    $currency
+                    $currency,
+                    $effectivePaymentMethod,
                 );
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_PAYMENT_INTENT_UPDATE_FAILED', [
@@ -522,7 +669,9 @@ class CheckoutService
                     $effectiveShipping,
                     $normalizedShopShippings,
                     $paymentResult,
-                    $promotionQuote
+                    $promotionQuote,
+                    $taxQuote,
+                    $effectivePaymentMethod,
                 ): void {
                     $updated = $this->checkoutSessions->updateWhere(
                         [['id', '=', $checkoutId]],
@@ -532,8 +681,13 @@ class CheckoutService
                             'shipping_total' => $effectiveShipping,
                             'promotion_discount_total' => $promotionQuote['discount_total'],
                             'promotion_snapshot' => $promotionQuote,
+                            'tax_amount' => $taxQuote['tax_amount'],
+                            'taxable_amount' => $taxQuote['taxable_amount'],
+                            'tax_enabled' => $taxQuote['tax_enabled'],
+                            'tax_snapshot' => $taxQuote,
                             'total' => $grandTotal,
                             'client_secret' => $paymentResult['client_secret'],
+                            'payment_method' => $effectivePaymentMethod,
                             'updated_at' => $updatedAt,
                         ]
                     );
@@ -547,6 +701,8 @@ class CheckoutService
                     } else {
                         CheckoutShopShipping::query()->where('checkout_id', $checkoutId)->delete();
                     }
+
+                    $this->persistCheckoutItemTaxes($taxQuote);
                 });
             } catch (\Throwable $e) {
                 logger()->error('CHECKOUT_PERSIST_AFTER_PAYMENT_INTENT_UPDATE', [
@@ -581,6 +737,9 @@ class CheckoutService
                 'grand_total' => $grandTotal,
                 'shipping_total' => $effectiveShipping,
                 'promotion_discount_total' => (float) $promotionQuote['discount_total'],
+                'tax_amount' => (float) $taxQuote['tax_amount'],
+                'taxable_amount' => (float) $taxQuote['taxable_amount'],
+                'tax_enabled' => (bool) $taxQuote['tax_enabled'],
                 'promo_code' => $promotionQuote['promo_code'] ?? null,
                 'promo_code_status' => $promotionQuote['promo_code_status'] ?? null,
                 'promo_code_message' => $promotionQuote['promo_code_message'] ?? null,
@@ -593,6 +752,7 @@ class CheckoutService
             }
 
             try {
+                $checkout->payment_method = $effectivePaymentMethod;
                 $this->authorizeCodPaymentIfNeeded($checkout);
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_COD_AUTHORIZE_FAILED', [
@@ -669,7 +829,7 @@ class CheckoutService
      */
     private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout): void
     {
-        if (($checkout->payment_method ?? 'prepaid') !== 'cod') {
+        if (($checkout->payment_method ?? 'cod') !== 'cod') {
             return;
         }
 
@@ -770,8 +930,8 @@ class CheckoutService
             ->where('checkout_id', $checkoutId)
             ->get()
             ->pluck('shop_id')
-            ->filter(static fn ($s) => $s !== null && $s !== '')
-            ->map(static fn ($s) => (string) $s)
+            ->filter(static fn($s) => $s !== null && $s !== '')
+            ->map(static fn($s) => (string) $s)
             ->unique()
             ->values()
             ->all();
@@ -787,7 +947,7 @@ class CheckoutService
         $feeShops = array_column($normalizedRows, 'shop_id');
         $missingShopIds = array_values(array_filter(
             $cartShops,
-            static fn (string $sid): bool => !in_array($sid, $feeShops, true)
+            static fn(string $sid): bool => !in_array($sid, $feeShops, true)
         ));
         if ($missingShopIds !== []) {
             return [
@@ -800,7 +960,7 @@ class CheckoutService
 
         $unknownShopIds = array_values(array_filter(
             $feeShops,
-            static fn (string $sid): bool => !in_array($sid, $cartShops, true)
+            static fn(string $sid): bool => !in_array($sid, $cartShops, true)
         ));
         if ($unknownShopIds !== []) {
             return [
@@ -879,10 +1039,9 @@ class CheckoutService
         string $userId,
         string $rawIdempotencyKey,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid',
+        string $paymentMethod = 'cod',
         ?array $customerMeta = null,
-    ): array
-    {
+    ): array {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
         }
@@ -901,7 +1060,7 @@ class CheckoutService
         if ($validationData['stockValid'] !== true) {
             $invalidItems = array_values(array_filter(
                 $validationData['items'] ?? [],
-                static fn ($row) => !is_array($row) || !($row['stock_validation'] ?? false)
+                static fn($row) => !is_array($row) || !($row['stock_validation'] ?? false)
             ));
             throw new BusinessException('OUT_OF_STOCK', 400, ['items' => $invalidItems]);
         }
@@ -938,10 +1097,9 @@ class CheckoutService
         string $userId,
         string $idempotencyHash,
         ?array $deliveryAddress = null,
-        string $paymentMethod = 'prepaid',
+        string $paymentMethod = 'cod',
         ?array $customerMeta = null,
-    ): CheckoutSession
-    {
+    ): CheckoutSession {
         return DB::transaction(function () use ($items, $validatedItems, $idempotencyHash, $userId, $deliveryAddress, $paymentMethod, $customerMeta) {
             $now = now();
 
@@ -1047,7 +1205,7 @@ class CheckoutService
 
         $subtotal = (float) array_reduce(
             $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
+            static fn(float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
             0.0
         );
 

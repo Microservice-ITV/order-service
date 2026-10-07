@@ -29,6 +29,10 @@ class CheckoutSession extends Model
         'shipping_total',
         'promotion_discount_total',
         'promotion_snapshot',
+        'tax_amount',
+        'taxable_amount',
+        'tax_enabled',
+        'tax_snapshot',
         'failure_reason',
         'idempotency_key',
         'user_id',
@@ -50,6 +54,10 @@ class CheckoutSession extends Model
         'expire_at' => 'datetime',
         'delivery_address' => 'array',
         'promotion_snapshot' => 'array',
+        'tax_snapshot' => 'array',
+        'tax_enabled' => 'boolean',
+        'tax_amount' => 'decimal:2',
+        'taxable_amount' => 'decimal:2',
         'address_updated_at' => 'datetime',
     ];
 
