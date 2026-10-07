@@ -56,8 +56,10 @@ class OrderService
      * Also creates shop_orders and assigns shop_order_id to each order_item.
      * Runs inside the same transaction as order creation (idempotent per order).
      */
-    public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): void
+    public function snapshotCheckoutItems(CheckoutSession $checkout, Order $order): array
     {
+        $orderItemIds = [];
+
         $taxLines = [];
         foreach (is_array($checkout->tax_snapshot['lines'] ?? null) ? $checkout->tax_snapshot['lines'] : [] as $line) {
             if (is_array($line) && isset($line['line_id'])) {
@@ -79,34 +81,39 @@ class OrderService
             : null;
 
         $rows = $checkout->items
-            ->map(function (CheckoutItem $item) use ($order, $taxLines, $promoByLine): array {
+            ->map(function (CheckoutItem $item) use ($order, $taxLines, $promoByLine, &$orderItemIds): array {
+                $orderItemId = (string) Str::uuid();
+                $orderItemIds[(string) $item->id] = $orderItemId;
+
                 $taxLine = $taxLines[(string) $item->id] ?? [];
                 $storedTax = round((float) ($item->tax_amount ?? 0), 2);
                 $snapshotTax = round((float) ($taxLine['tax_amount'] ?? 0), 2);
+
                 $discountAmount = $promoByLine !== null
                     ? (float) ($promoByLine[(string) $item->id] ?? 0)
                     : (float) ($taxLine['discount_allocated'] ?? 0);
+
                 return [
-                    'id'      => (string) Str::uuid(),
-                    'order_id'            => $order->order_id,
-                    'product_id'          => $item->product_id,
-                    'variant_id'          => $item->variant_id,
-                    'qty'                 => $item->qty,
-                    'price'               => $item->price,
-                    'subtotal'          => $item->line_total,
-                    'available_stock'     => $item->available_stock,
-                    'product_slug'        => $item->product_slug,
-                    'product_title'       => $item->product_title,
+                    'id' => $orderItemId,
+                    'order_id' => $order->order_id,
+                    'product_id' => $item->product_id,
+                    'variant_id' => $item->variant_id,
+                    'qty' => $item->qty,
+                    'price' => $item->price,
+                    'subtotal' => $item->line_total,
+                    'available_stock' => $item->available_stock,
+                    'product_slug' => $item->product_slug,
+                    'product_title' => $item->product_title,
                     'product_description' => $item->product_description,
-                    'product_sku'         => $item->product_sku,
-                    'category_id'         => $item->category_id,
-                    'tax_amount'          => $storedTax > 0 ? $storedTax : $snapshotTax,
-                    'discount_amount'     => $discountAmount,
-                    'shop_id'             => $item->shop_id,
-                    'image_url'           => $item->image_url,
-                    'currency'            => $item->currency,
-                    'created_at'          => now(),
-                    'updated_at'          => now(),
+                    'product_sku' => $item->product_sku,
+                    'category_id' => $item->category_id,
+                    'tax_amount' => $storedTax > 0 ? $storedTax : $snapshotTax,
+                    'discount_amount' => $discountAmount,
+                    'shop_id' => $item->shop_id,
+                    'image_url' => $item->image_url,
+                    'currency' => $item->currency,
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ];
             })
             ->filter(fn(array $row): bool => $row['product_id'] !== null && $row['product_id'] !== '')
@@ -114,13 +121,14 @@ class OrderService
             ->all();
 
         if ($rows === []) {
-            return;
+            return [];
         }
 
         OrderItem::insert($rows);
 
-        // Create shop_orders and assign shop_order_id to order_items
         $this->createShopOrders($rows, $checkout, $order);
+
+        return $orderItemIds;
     }
 
     /**
