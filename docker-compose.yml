@@ -143,7 +143,7 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    entrypoint: ["php", "artisan", "consume:all"]
+    entrypoint: ["sh", "-c", "umask 0002; exec php artisan consume:all"]
 
   order-saga-manager:
     build:
@@ -178,6 +178,7 @@ services:
       - app-network
     entrypoint: >
       sh -c "
+        umask 0002
         while true; do
           echo \"Running saga timeout processing at \$(date)\"
           php artisan saga:manage process-timeouts --limit=50
@@ -233,6 +234,7 @@ services:
       - app-network
     entrypoint: >
       sh -c "
+        umask 0002
         while true; do
           echo \"Running saga statistics cleanup at \$(date)\"
           php artisan saga:manage cleanup-old-sagas --days=7

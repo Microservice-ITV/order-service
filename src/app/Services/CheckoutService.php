@@ -18,6 +18,7 @@ use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class CheckoutService
 {
@@ -447,7 +448,7 @@ class CheckoutService
      *   promo_code_status?: ?string,
      *   promo_code_message?: ?string,
      *   client_secret?: string,
-     *   shop_shippings?: list<array{shop_id: string, shipping_fee: float}>
+     *   shop_shippings?: list<array{shop_id: string, shipping_fee: float, provider_id?: ?string}>
      * }
      */
     public function updateDeliveryAddress(
@@ -880,8 +881,8 @@ class CheckoutService
     }
 
     /**
-     * @param  list<array{shop_id: string, shipping_fee: float}>  $rows
-     * @return list<array{shop_id: string, shipping_fee: float}>
+     * @param  list<array{shop_id: string, shipping_fee: float, provider_id?: ?string}>  $rows
+     * @return list<array{shop_id: string, shipping_fee: float, provider_id: ?string}>
      */
     private function normalizeShopShippingsPayload(array $rows): array
     {
@@ -892,15 +893,33 @@ class CheckoutService
                 continue;
             }
             $fee = round((float) ($row['shipping_fee'] ?? 0), 2);
-            if (!isset($byShop[$sid])) {
-                $byShop[$sid] = 0.0;
+            $providerId = isset($row['provider_id']) ? trim((string) $row['provider_id']) : null;
+            if ($providerId === '') {
+                $providerId = null;
             }
-            $byShop[$sid] += $fee;
+            if (!isset($byShop[$sid])) {
+                $byShop[$sid] = ['shipping_fee' => 0.0, 'provider_id' => $providerId];
+            } elseif (
+                $providerId !== null
+                && $byShop[$sid]['provider_id'] !== null
+                && $byShop[$sid]['provider_id'] !== $providerId
+            ) {
+                throw ValidationException::withMessages([
+                    'shop_shippings' => 'A shop cannot have multiple delivery providers in one checkout.',
+                ]);
+            } elseif ($providerId !== null) {
+                $byShop[$sid]['provider_id'] = $providerId;
+            }
+            $byShop[$sid]['shipping_fee'] += $fee;
         }
 
         $out = [];
-        foreach ($byShop as $shopId => $sum) {
-            $out[] = ['shop_id' => $shopId, 'shipping_fee' => round($sum, 2)];
+        foreach ($byShop as $shopId => $row) {
+            $out[] = [
+                'shop_id' => $shopId,
+                'shipping_fee' => round($row['shipping_fee'], 2),
+                'provider_id' => $row['provider_id'],
+            ];
         }
 
         return $out;
@@ -915,7 +934,7 @@ class CheckoutService
     }
 
     /**
-     * @param  list<array{shop_id: string, shipping_fee: float}>  $normalizedRows
+     * @param  list<array{shop_id: string, shipping_fee: float, provider_id: ?string}>  $normalizedRows
      * @return array{
      *   reason: string,
      *   checkout_shop_ids: list<string>,
@@ -987,6 +1006,7 @@ class CheckoutService
                 'checkout_id' => $checkoutId,
                 'shop_id' => $row['shop_id'],
                 'shipping_fee' => $row['shipping_fee'],
+                'provider_id' => $row['provider_id'],
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);

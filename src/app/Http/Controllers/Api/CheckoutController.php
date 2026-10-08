@@ -46,6 +46,7 @@ class CheckoutController extends Controller
                 'shop_shippings' => ['nullable', 'array'],
                 'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
                 'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
+                'shop_shippings.*.provider_id' => ['nullable', 'uuid'],
                 'promo_code' => ['nullable', 'string', 'max:64'],
                 'payment_method' => ['nullable', 'string', 'in:prepaid,cod'],
             ]));
@@ -77,6 +78,7 @@ class CheckoutController extends Controller
                     static fn (array $row): array => [
                         'shop_id' => (string) $row['shop_id'],
                         'shipping_fee' => (float) $row['shipping_fee'],
+                        'provider_id' => $row['provider_id'] ?? null,
                     ],
                     $validated['shop_shippings']
                 );
