@@ -8,13 +8,16 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckoutRequest;
 use App\Models\CheckoutSession;
 use App\Services\CheckoutService;
+use App\Services\RabbitMQ\DeliveryCompanyConfigurationRpcClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Throwable;
 
 class CheckoutController extends Controller
 {
     public function __construct(
         private readonly CheckoutService $checkoutService,
+        private readonly DeliveryCompanyConfigurationRpcClient $deliveryCompanyConfigurationRpcClient,
     ) {}
 
     public function checkout(CheckoutRequest $request): JsonResponse
@@ -43,10 +46,10 @@ class CheckoutController extends Controller
         try {
             $validated = $request->validate(array_merge($this->deliveryAddressRules(), [
                 'shipping_total' => ['nullable', 'numeric', 'min:0'],
-                'shop_shippings' => ['nullable', 'array'],
+                'shop_shippings' => ['required', 'array', 'min:1'],
                 'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
                 'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
-                'shop_shippings.*.provider_id' => ['nullable', 'uuid'],
+                'shop_shippings.*.delivery_company_id' => ['required', 'string', 'max:64'],
                 'promo_code' => ['nullable', 'string', 'max:64'],
                 'payment_method' => ['nullable', 'string', 'in:prepaid,cod'],
             ]));
@@ -68,21 +71,26 @@ class CheckoutController extends Controller
             $paymentMethod = $validated['payment_method'] ?? null;
             unset($validated['payment_method']);
 
-            $shopShippings = null;
-            if (
-                isset($validated['shop_shippings'])
-                && is_array($validated['shop_shippings'])
-                && $validated['shop_shippings'] !== []
-            ) {
-                $shopShippings = array_map(
-                    static fn (array $row): array => [
-                        'shop_id' => (string) $row['shop_id'],
+            $shopShippings = array_map(
+                function (array $row): array {
+                    $shopId = trim((string) $row['shop_id']);
+                    $deliveryCompanyId = trim((string) $row['delivery_company_id']);
+                    if ($shopId === '' || $deliveryCompanyId === '') {
+                        throw new BusinessException(
+                            'Each shop must select an active Delivery Company configured for that shop',
+                            422,
+                        );
+                    }
+                    $this->assertActiveShopDeliveryCompany($shopId, $deliveryCompanyId);
+
+                    return [
+                        'shop_id' => $shopId,
                         'shipping_fee' => (float) $row['shipping_fee'],
-                        'provider_id' => $row['provider_id'] ?? null,
-                    ],
-                    $validated['shop_shippings']
-                );
-            }
+                        'delivery_company_id' => $deliveryCompanyId,
+                    ];
+                },
+                $validated['shop_shippings']
+            );
             unset($validated['shop_shippings']);
 
             $result = $this->checkoutService->updateDeliveryAddress(
@@ -115,6 +123,7 @@ class CheckoutController extends Controller
                     'payment_not_ready' => 'Payment is not ready yet; wait for stock confirmation to complete',
                     'shipping_total_mismatch' => 'shipping_total must match the sum of shop_shippings',
                     'shipping_missing_for_shop' => 'Provide a shipping fee for each shop that has items in this checkout',
+                    'shop_delivery_company_missing' => 'Select an active Delivery Company configured for every shop in this checkout',
                     'unknown_shop_in_shipping' => 'shop_shippings contains a shop_id that is not in this checkout',
                     'checkout_items_missing_shop_id' => 'Cart line items must include shop_id to use per-shop shipping',
                     'shop_shippings_invalid' => 'shop_shippings could not be applied (empty or invalid shop ids)',
@@ -180,6 +189,8 @@ class CheckoutController extends Controller
             }
 
             return response()->json($payload);
+        } catch (BusinessException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatus(), $e->getData());
         } catch (\Throwable $e) {
             logger()->error('CHECKOUT_UPDATE_ADDRESS_FAILED', [
                 'checkout_id' => $checkoutId,
@@ -192,6 +203,33 @@ class CheckoutController extends Controller
                 'error' => 'Failed to update delivery address',
                 'detail' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function assertActiveShopDeliveryCompany(string $shopId, string $deliveryCompanyId): void
+    {
+        $accountingServiceApiKey = trim((string) config('services.accounting.api_key'));
+        if ($accountingServiceApiKey === '') {
+            throw new BusinessException('Accounting Service authentication is not configured', 503);
+        }
+
+        try {
+            $isActive = $this->deliveryCompanyConfigurationRpcClient->isActive(
+                $shopId,
+                $deliveryCompanyId,
+                $accountingServiceApiKey,
+            );
+        } catch (Throwable $error) {
+            logger()->error('CHECKOUT_DELIVERY_COMPANY_VERIFICATION_FAILED', [
+                'shop_id' => $shopId,
+                'delivery_company_id' => $deliveryCompanyId,
+                'error' => $error->getMessage(),
+            ]);
+            throw new BusinessException('Shop delivery configuration could not be verified', 503);
+        }
+
+        if (!$isActive) {
+            throw new BusinessException('The selected Delivery Company is not active for this shop', 422);
         }
     }
 

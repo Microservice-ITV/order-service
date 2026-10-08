@@ -448,7 +448,7 @@ class CheckoutService
      *   promo_code_status?: ?string,
      *   promo_code_message?: ?string,
      *   client_secret?: string,
-     *   shop_shippings?: list<array{shop_id: string, shipping_fee: float, provider_id?: ?string}>
+     *   shop_shippings?: list<array{shop_id: string, shipping_fee: float, delivery_company_id?: ?string}>
      * }
      */
     public function updateDeliveryAddress(
@@ -500,44 +500,57 @@ class CheckoutService
 
         $currency = null;
 
-        $effectiveShipping = null;
-        $normalizedShopShippings = null;
-        if ($shopShippings !== null && $shopShippings !== []) {
-            $normalizedShopShippings = $this->normalizeShopShippingsPayload($shopShippings);
-            if ($normalizedShopShippings === []) {
-                return [
-                    'not_found' => false,
-                    'invalid_state' => true,
-                    'reason' => 'shop_shippings_invalid',
-                    'status' => $checkout->status_id->name,
-                    'address_updated_at' => null,
-                ];
-            }
-            $computedShipping = $this->sumShopShippingFees($normalizedShopShippings);
-            if ($shippingTotal !== null && abs($computedShipping - $shippingTotal) > 0.02) {
-                return [
-                    'not_found' => false,
-                    'invalid_state' => true,
-                    'reason' => 'shipping_total_mismatch',
-                    'status' => $checkout->status_id->name,
-                    'address_updated_at' => null,
-                ];
-            }
-            $effectiveShipping = $computedShipping;
+        if ($shopShippings === null || $shopShippings === []) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => 'shop_delivery_company_missing',
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
+        }
 
-            $shopError = $this->validateShopShippingsAgainstItems($checkoutId, $normalizedShopShippings);
-            if ($shopError !== null) {
-                return [
-                    'not_found' => false,
-                    'invalid_state' => true,
-                    'reason' => $shopError['reason'],
-                    'shop_validation' => $shopError,
-                    'status' => $checkout->status_id->name,
-                    'address_updated_at' => null,
-                ];
+        $effectiveShipping = null;
+        $normalizedShopShippings = $this->normalizeShopShippingsPayload($shopShippings);
+        $hasUnconfiguredShop = $normalizedShopShippings === [];
+        foreach ($normalizedShopShippings as $row) {
+            if (empty($row['delivery_company_id'])) {
+                $hasUnconfiguredShop = true;
+                break;
             }
-        } elseif ($shippingTotal !== null) {
-            $effectiveShipping = $shippingTotal;
+        }
+        if ($hasUnconfiguredShop) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => 'shop_delivery_company_missing',
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
+        }
+
+        $computedShipping = $this->sumShopShippingFees($normalizedShopShippings);
+        if ($shippingTotal !== null && abs($computedShipping - $shippingTotal) > 0.02) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => 'shipping_total_mismatch',
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
+        }
+        $effectiveShipping = $computedShipping;
+
+        $shopError = $this->validateShopShippingsAgainstItems($checkoutId, $normalizedShopShippings);
+        if ($shopError !== null) {
+            return [
+                'not_found' => false,
+                'invalid_state' => true,
+                'reason' => $shopError['reason'],
+                'shop_validation' => $shopError,
+                'status' => $checkout->status_id->name,
+                'address_updated_at' => null,
+            ];
         }
 
         if ($effectiveShipping !== null) {
@@ -881,8 +894,8 @@ class CheckoutService
     }
 
     /**
-     * @param  list<array{shop_id: string, shipping_fee: float, provider_id?: ?string}>  $rows
-     * @return list<array{shop_id: string, shipping_fee: float, provider_id: ?string}>
+     * @param  list<array{shop_id: string, shipping_fee: float, delivery_company_id?: ?string}>  $rows
+     * @return list<array{shop_id: string, shipping_fee: float, delivery_company_id: ?string}>
      */
     private function normalizeShopShippingsPayload(array $rows): array
     {
@@ -893,22 +906,29 @@ class CheckoutService
                 continue;
             }
             $fee = round((float) ($row['shipping_fee'] ?? 0), 2);
-            $providerId = isset($row['provider_id']) ? trim((string) $row['provider_id']) : null;
-            if ($providerId === '') {
-                $providerId = null;
+            $deliveryCompanyId = isset($row['delivery_company_id'])
+                ? trim((string) $row['delivery_company_id'])
+                : null;
+            if ($deliveryCompanyId === '') {
+                $deliveryCompanyId = null;
             }
             if (!isset($byShop[$sid])) {
-                $byShop[$sid] = ['shipping_fee' => 0.0, 'provider_id' => $providerId];
+                $byShop[$sid] = [
+                    'shipping_fee' => 0.0,
+                    'delivery_company_id' => $deliveryCompanyId,
+                ];
             } elseif (
-                $providerId !== null
-                && $byShop[$sid]['provider_id'] !== null
-                && $byShop[$sid]['provider_id'] !== $providerId
+                $deliveryCompanyId !== null
+                && $byShop[$sid]['delivery_company_id'] !== null
+                && $byShop[$sid]['delivery_company_id'] !== $deliveryCompanyId
             ) {
                 throw ValidationException::withMessages([
-                    'shop_shippings' => 'A shop cannot have multiple delivery providers in one checkout.',
+                    'shop_shippings' => 'A shop cannot have multiple delivery companies in one checkout.',
                 ]);
-            } elseif ($providerId !== null) {
-                $byShop[$sid]['provider_id'] = $providerId;
+            } else {
+                if ($deliveryCompanyId !== null) {
+                    $byShop[$sid]['delivery_company_id'] = $deliveryCompanyId;
+                }
             }
             $byShop[$sid]['shipping_fee'] += $fee;
         }
@@ -918,7 +938,7 @@ class CheckoutService
             $out[] = [
                 'shop_id' => $shopId,
                 'shipping_fee' => round($row['shipping_fee'], 2),
-                'provider_id' => $row['provider_id'],
+                'delivery_company_id' => $row['delivery_company_id'],
             ];
         }
 
@@ -934,7 +954,7 @@ class CheckoutService
     }
 
     /**
-     * @param  list<array{shop_id: string, shipping_fee: float, provider_id: ?string}>  $normalizedRows
+     * @param  list<array{shop_id: string, shipping_fee: float, delivery_company_id: ?string}>  $normalizedRows
      * @return array{
      *   reason: string,
      *   checkout_shop_ids: list<string>,
@@ -1006,7 +1026,7 @@ class CheckoutService
                 'checkout_id' => $checkoutId,
                 'shop_id' => $row['shop_id'],
                 'shipping_fee' => $row['shipping_fee'],
-                'provider_id' => $row['provider_id'],
+                'delivery_company_id' => $row['delivery_company_id'],
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);

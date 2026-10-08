@@ -23,6 +23,7 @@ services:
       DB_DATABASE: ${DB_DATABASE}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
+      ACCOUNTING_SERVICE_API_KEY: ${ACCOUNTING_SERVICE_API_KEY:?ACCOUNTING_SERVICE_API_KEY must be set}
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f php-fpm || exit 1"]
       interval: 30s

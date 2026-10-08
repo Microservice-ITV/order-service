@@ -64,4 +64,8 @@ return [
         'api_key' => env('WALLET_SERVICE_API_KEY'),
     ],
 
+    'accounting' => [
+        'api_key' => env('ACCOUNTING_SERVICE_API_KEY'),
+    ],
+
 ];

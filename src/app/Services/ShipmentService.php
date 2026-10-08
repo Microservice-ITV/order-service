@@ -58,9 +58,9 @@ final class ShipmentService
             return $this->shipShop($order, $shopId, $input, $trackingNumber, $trackingUrl);
         }
 
-        if (ShopOrder::where('order_id', $orderId)->whereNotNull('provider_id')->exists()) {
+        if (ShopOrder::where('order_id', $orderId)->whereNotNull('delivery_company_id')->exists()) {
             throw new BusinessException(
-                'Orders with mapped delivery providers must be shipped per shop',
+                'Orders with configured Delivery Companies must be shipped per shop',
                 409,
                 ['reason' => 'per_shop_shipment_required']
             );
@@ -80,9 +80,9 @@ final class ShipmentService
         }
 
         $updateData = [
-            'courier_code' => $input['courier_code'],
-            'courier_name' => $input['courier_name'],
-            'courier_phone' => $input['courier_phone'],
+            'courier_code' => $input['courier_code'] ?? null,
+            'courier_name' => $input['courier_name'] ?? null,
+            'courier_phone' => $input['courier_phone'] ?? null,
             'tracking_number' => $trackingNumber,
             'tracking_url' => $trackingUrl,
             'order_status' => OrderStatus::SHIPPED->value,
@@ -128,12 +128,20 @@ final class ShipmentService
             );
         }
 
+        if (!$shopOrder->delivery_company_id) {
+            throw new BusinessException(
+                'Configure an active Delivery Company for this shop before creating a shipment',
+                409,
+                ['reason' => 'shop_delivery_company_not_configured']
+            );
+        }
+
         // Persist per-shop shipment data on the shop_order.
         $shopOrder->update([
             'tracking_number'   => $trackingNumber,
-            'courier_code'      => $input['courier_code'],
-            'courier_name'      => $input['courier_name'],
-            'courier_phone'     => $input['courier_phone'],
+            'courier_code'      => null,
+            'courier_name'      => null,
+            'courier_phone'     => null,
             'tracking_url'      => $trackingUrl,
             'order_status'      => OrderStatus::SHIPPED->value,
             'shipment_created_at' => now(),
@@ -274,7 +282,8 @@ final class ShipmentService
             'order_reference' => $order->checkout_id,
             'customer_id'     => (string) $checkout->user_id,
             'shop_id'         => $shopId,
-            'provider_id'     => $so?->provider_id,
+            'shop_order_id'   => $so?->id,
+            'deliveryCompanyId' => $so?->delivery_company_id,
             'order_status'    => OrderStatus::tryFrom((int) $order->order_status)?->name,
             'recipient_name'  => $recipientName,
             'recipient_phone' => $recipientPhone,
