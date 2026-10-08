@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Route;
 
 // Wallet Service (service-to-service): per-shop payout split for ledger distribution
 Route::middleware('wallet.internal')->prefix('internal/orders')->group(function () {
+    Route::get('invoice-candidates', [InvoiceSnapshotController::class, 'index'])
+        ->name('internal.orders.invoice-candidates');
     Route::get('{orderId}/wallet-split', [WalletSplitController::class, 'show'])
         ->name('internal.orders.wallet-split');
     Route::get('{orderId}/invoice-snapshot', [InvoiceSnapshotController::class, 'show'])
