@@ -20,6 +20,7 @@ class ShopOrder extends Model
         'id',
         'order_id',
         'shop_id',
+        'provider_id',
         'subtotal',
         'shipping_total',
         'discount_total',

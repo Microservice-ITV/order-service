@@ -58,6 +58,14 @@ final class ShipmentService
             return $this->shipShop($order, $shopId, $input, $trackingNumber, $trackingUrl);
         }
 
+        if (ShopOrder::where('order_id', $orderId)->whereNotNull('provider_id')->exists()) {
+            throw new BusinessException(
+                'Orders with mapped delivery providers must be shipped per shop',
+                409,
+                ['reason' => 'per_shop_shipment_required']
+            );
+        }
+
         // --- Legacy path: all-or-nothing shipment (gated on all shops ready) ---
         $pendingShopCount = ShopOrder::where('order_id', $orderId)
             ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
@@ -266,6 +274,7 @@ final class ShipmentService
             'order_reference' => $order->checkout_id,
             'customer_id'     => (string) $checkout->user_id,
             'shop_id'         => $shopId,
+            'provider_id'     => $so?->provider_id,
             'order_status'    => OrderStatus::tryFrom((int) $order->order_status)?->name,
             'recipient_name'  => $recipientName,
             'recipient_phone' => $recipientPhone,

@@ -504,6 +504,8 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
     "order_id": "9dd5ba1f-c7c2-4f5d-9af7-0dc914dcbaf0",
     "order_reference": "74e888a5-f33e-4dc2-9bb3-54512d67806d",
     "customer_id": "usr_1001",
+    "shop_id": "shop-1001",
+    "provider_id": "<canonical Delivery Service provider UUID>",
     "recipient_name": "Kyaw Swar",
     "recipient_phone": "+84901234567",
     "pickup_address": {
@@ -539,8 +541,8 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
       }
     ],
     "courier": {
-      "code": "DHL",
-      "name": "DHL Express",
+      "code": "<configured courier code>",
+      "name": "<configured courier name>",
       "phone": "+84902222222"
     },
     "tracking_number": "TRK-ABC123456789-1739123456",

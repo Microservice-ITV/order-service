@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Contracts\OrderInterface;
 use App\Enums\OrderStatus;
 use App\Models\CheckoutItem;
+use App\Models\CheckoutShopShipping;
 use App\Models\CheckoutSession;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -155,6 +156,9 @@ class OrderService
         }
 
         $shippingTotal = (float) ($checkout->shipping_total ?? 0);
+        $providerIdByShopId = CheckoutShopShipping::query()
+            ->where('checkout_id', $checkout->id)
+            ->pluck('provider_id', 'shop_id');
         $discountParts = $this->discountParts($checkout);
         $snapshot = is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [];
 
@@ -182,6 +186,7 @@ class OrderService
                 'id'              => (string) Str::uuid(),
                 'order_id'        => $order->order_id,
                 'shop_id'         => $shopId,
+                'provider_id'     => $providerIdByShopId->get($shopId),
                 'subtotal'        => $shopSubtotal,
                 'shipping_total'  => $shopShipping,
                 'discount_total'  => $shopDiscount,

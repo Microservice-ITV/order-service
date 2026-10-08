@@ -20,6 +20,7 @@ class CheckoutShopShipping extends Model
         'checkout_id',
         'shop_id',
         'shipping_fee',
+        'provider_id',
     ];
 
     protected $casts = [
