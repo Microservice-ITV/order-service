@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Contracts\CheckoutSessionInterface;
 use App\Contracts\OrderInterface;
 use App\Models\CheckoutSession;
+use App\Models\Order;
+use Illuminate\Support\Carbon;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 final class InvoiceSnapshotService
@@ -61,7 +63,122 @@ final class InvoiceSnapshotService
             throw new HttpException(404, 'Checkout session not found');
         }
 
+        return $this->buildSnapshot($order, $checkout);
+    }
+
+    /**
+     * Fetch invoice-eligible order snapshots in stable keyset-paginated batches.
+     *
+     * @return array{orders: list<array{snapshot: array<string, mixed>, createdAt: string, cursorAfter: string}>, nextCursor: string|null}
+     */
+    public function listInvoiceCandidates(int $limit, ?string $cursor): array
+    {
+        $query = Order::query()
+            ->whereIn('payment_status', ['PAID', 'COD'])
+            ->with(['items', 'checkoutSession.items'])
+            ->orderBy('created_at')
+            ->orderBy('order_id');
+
+        $decodedCursor = $this->decodeCursor($cursor);
+        if ($decodedCursor !== null) {
+            $query->where(function ($query) use ($decodedCursor): void {
+                $query->where('created_at', '>', $decodedCursor['createdAt'])
+                    ->orWhere(function ($query) use ($decodedCursor): void {
+                        $query->where('created_at', '=', $decodedCursor['createdAt'])
+                            ->where('order_id', '>', $decodedCursor['orderId']);
+                    });
+            });
+        }
+
+        $orders = $query->limit($limit + 1)->get();
+        $hasMore = $orders->count() > $limit;
+        $page = $orders->take($limit);
+        $candidates = [];
+
+        foreach ($page as $order) {
+            /** @var CheckoutSession|null $checkout */
+            $checkout = $order->checkoutSession;
+            if ($checkout === null) {
+                continue;
+            }
+
+            $createdAt = $order->created_at;
+            if ($createdAt === null) {
+                continue;
+            }
+
+            $candidates[] = [
+                'snapshot' => $this->buildSnapshot($order, $checkout),
+                'createdAt' => $createdAt->toIso8601String(),
+                'cursorAfter' => $this->encodeCursor([
+                    'createdAt' => $createdAt->toDateTimeString(),
+                    'orderId' => (string) $order->order_id,
+                ]),
+            ];
+        }
+
+        $lastOrder = $page->last();
+        $nextCursor = $hasMore && $lastOrder !== null && $lastOrder->created_at !== null
+            ? $this->encodeCursor([
+                'createdAt' => $lastOrder->created_at->toDateTimeString(),
+                'orderId' => (string) $lastOrder->order_id,
+            ])
+            : null;
+
+        return [
+            'orders' => $candidates,
+            'nextCursor' => $nextCursor,
+        ];
+    }
+
+    /**
+     * @param array{createdAt: string, orderId: string} $cursor
+     */
+    private function encodeCursor(array $cursor): string
+    {
+        return rtrim(strtr(base64_encode(json_encode($cursor, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+    }
+
+    /** @return array{createdAt: string, orderId: string}|null */
+    private function decodeCursor(?string $cursor): ?array
+    {
+        if ($cursor === null || trim($cursor) === '') {
+            return null;
+        }
+
+        $decoded = base64_decode(strtr($cursor, '-_', '+/'), true);
+        if ($decoded === false) {
+            throw new HttpException(422, 'Invalid invoice candidate cursor');
+        }
+
+        try {
+            $value = json_decode($decoded, true, 512, JSON_THROW_ON_ERROR);
+            if (
+                ! is_array($value)
+                || ! is_string($value['createdAt'] ?? null)
+                || ! is_string($value['orderId'] ?? null)
+                || trim($value['orderId']) === ''
+            ) {
+                throw new HttpException(422, 'Invalid invoice candidate cursor');
+            }
+            $createdAt = Carbon::parse($value['createdAt'])->toDateTimeString();
+        } catch (\Throwable $error) {
+            if ($error instanceof HttpException) {
+                throw $error;
+            }
+            throw new HttpException(422, 'Invalid invoice candidate cursor');
+        }
+
+        return ['createdAt' => $createdAt, 'orderId' => $value['orderId']];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildSnapshot(Order $order, CheckoutSession $checkout): array
+    {
         $items = $checkout->items;
+        $orderItems = $order->items;
         $deliveryAddress = is_array($checkout->delivery_address)
             ? $checkout->delivery_address
             : [];
@@ -101,7 +218,7 @@ final class InvoiceSnapshotService
             'paymentStatus' => (string) ($order->payment_status ?? ''),
             'paymentMethod' => (string) ($checkout->payment_method ?? ''),
 
-            'items' => $items
+            'items' => $orderItems
                 ->map(static fn($item): array => [
                     'orderItemId' => (string) $item->id,
                     'productId' => (string) $item->product_id,
@@ -116,8 +233,8 @@ final class InvoiceSnapshotService
                         : null,
                     'quantity' => (int) $item->qty,
                     'unitPrice' => (string) $item->price,
-                    'lineTotal' => $item->line_total !== null
-                        ? (string) $item->line_total
+                    'lineTotal' => $item->subtotal !== null
+                        ? (string) $item->subtotal
                         : null,
                     'shopId' => $item->shop_id !== null
                         ? (string) $item->shop_id
