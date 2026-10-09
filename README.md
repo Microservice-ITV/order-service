@@ -607,6 +607,43 @@ order-service/
 
 ## Troubleshooting
 
+### Rebuild paid-order documents in ecommerce-read-service
+
+The `orders:replay-paid` command re-enqueues the latest successfully published
+`order.paid` snapshot for each selected order. It copies the stored outbox payload,
+assigns a fresh event ID for the read consumer's deduplication ledger, and routes
+the copy directly to the ecommerce read-service queue through RabbitMQ's default
+exchange. This avoids replaying the shared `order.paid` event to inventory,
+promotion, wallet, or notification consumers.
+
+Run the command inside the order-service PHP container. The read-service consumer
+must be running, and `--queue` must match its configured `ORDER_READ_QUEUE` value
+(the default is `order-read.events`). First preview selected orders:
+
+```bash
+php artisan orders:replay-paid --order-id=<ORDER_UUID> --queue=order-read.events --dry-run
+```
+
+Then enqueue the replay:
+
+```bash
+php artisan orders:replay-paid --order-id=<ORDER_UUID> --queue=order-read.events
+```
+
+For a full projection rebuild, preview first and explicitly opt in to all orders:
+
+```bash
+php artisan orders:replay-paid --all --queue=order-read.events --dry-run
+php artisan orders:replay-paid --all --queue=order-read.events
+```
+
+The command enqueues replay rows in the outbox and immediately publishes only
+those rows. If RabbitMQ or the target queue is unavailable, the rows remain
+`FAILED` for inspection/retry. Only orders with a `SENT` `order.paid` outbox
+event are eligible. Replaying this event rebuilds the paid baseline; it does not
+replay later shipment, fulfillment, or cancellation events, so a full
+current-state rebuild may need those event types replayed separately.
+
 ### Issue: RabbitMQ Connection Failed
 
 **Error**: `PhpAmqpLib\Exception\AMQPConnectionClosedException`
@@ -701,5 +738,4 @@ npm run build
 ```
 
 ---
-
 

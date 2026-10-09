@@ -28,7 +28,7 @@ class Publisher implements EventPublisherInterface
 
     private function ensureEventId(array $payload): array
     {
-        if (!isset($payload['event_id']) || !is_string($payload['event_id']) || $payload['event_id'] === '') {
+        if (! isset($payload['event_id']) || ! is_string($payload['event_id']) || $payload['event_id'] === '') {
             $payload['event_id'] = (string) Str::uuid();
         }
 
@@ -69,21 +69,40 @@ class Publisher implements EventPublisherInterface
         return $published;
     }
 
+    /** Publish specific outbox rows without flushing unrelated pending events. */
+    public function publishOutboxRows(array $outboxIds): int
+    {
+        $published = 0;
+
+        foreach (array_unique(array_map('intval', $outboxIds)) as $outboxId) {
+            if ($outboxId > 0 && $this->publishOutboxRow($outboxId)) {
+                $published++;
+            }
+        }
+
+        return $published;
+    }
+
     private function publishOutboxRow(int $outboxId): bool
     {
         $row = DB::table('outbox_events')->where('id', $outboxId)->first();
-        if (!$row) {
+        if (! $row) {
+            return false;
+        }
+
+        if (! in_array($row->status, ['PENDING', 'FAILED'], true)) {
             return false;
         }
 
         $payload = json_decode((string) $row->payload, true);
-        if (!is_array($payload)) {
+        if (! is_array($payload)) {
             DB::table('outbox_events')->where('id', $outboxId)->update([
                 'status' => 'FAILED',
                 'attempt_count' => (int) $row->attempt_count + 1,
                 'last_error' => 'Invalid payload JSON',
                 'updated_at' => now(),
             ]);
+
             return false;
         }
 
@@ -91,13 +110,23 @@ class Publisher implements EventPublisherInterface
             $conn = RabbitMQConnection::make();
             $channel = $conn->channel();
 
-            $channel->exchange_declare(
-                (string) $row->exchange,
-                'topic',
-                false,
-                true,
-                false
-            );
+            $exchange = (string) ($row->exchange ?? '');
+            $routingKey = (string) $row->routing_key;
+
+            if ($exchange === '') {
+                // Replay-only outbox rows may target one existing queue through
+                // RabbitMQ's default exchange, avoiding a fan-out to every
+                // service bound to the shared domain exchange.
+                $channel->queue_declare($routingKey, true, false, false, false, false);
+            } else {
+                $channel->exchange_declare(
+                    $exchange,
+                    'topic',
+                    false,
+                    true,
+                    false
+                );
+            }
 
             $msg = new AMQPMessage(json_encode($payload), [
                 'content_type' => 'application/json',
@@ -107,8 +136,8 @@ class Publisher implements EventPublisherInterface
 
             $channel->basic_publish(
                 $msg,
-                (string) $row->exchange,
-                (string) $row->routing_key
+                $exchange,
+                $routingKey
             );
 
             $channel->close();
