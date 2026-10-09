@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Enums\OrderStatus;
 use App\Models\Order;
+use App\Models\CodCollectionBatchOrder;
 use App\Models\ShopOrder;
 use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
@@ -41,15 +42,22 @@ class OrderPaymentRecordsController extends Controller
 
             $statusMap = $this->orderStatusMap($paymentOrderIds);
             $sellerStatusMap = $this->sellerDeliveryStatusMap($paymentOrderIds, $shopIds);
+            $sellerDeliveryMap = $this->sellerDeliveryProviderMap($paymentOrderIds, $shopIds);
+            $codCollectionBatchMap = $this->codCollectionBatchMap($paymentOrderIds, $shopIds);
 
             $rows = array_map(
-                static fn (array $payment): array => [
-                    ...$payment,
-                    'deliveryStatus' => $statusMap[(string) ($payment['orderId'] ?? '')]['orderStatus'] ?? null,
-                    'deliveryStatusId' => $statusMap[(string) ($payment['orderId'] ?? '')]['orderStatusId'] ?? null,
-                    // Seller-scoped fulfillment progress (their shops only).
-                    'sellerDeliveryStatus' => $sellerStatusMap[(string) ($payment['orderId'] ?? '')] ?? null,
-                ],
+                static function (array $payment) use ($statusMap, $sellerStatusMap, $sellerDeliveryMap, $codCollectionBatchMap): array {
+                    $orderId = (string) ($payment['orderId'] ?? '');
+                    return [
+                        ...$payment,
+                        'deliveryStatus' => $statusMap[$orderId]['orderStatus'] ?? null,
+                        'deliveryStatusId' => $statusMap[$orderId]['orderStatusId'] ?? null,
+                        'sellerDeliveryStatus' => $sellerStatusMap[$orderId] ?? null,
+                        'deliveryShopId' => $sellerDeliveryMap[$orderId]['shopId'] ?? null,
+                        'deliveryCompanyId' => $sellerDeliveryMap[$orderId]['deliveryCompanyId'] ?? null,
+                        'codCollectionBatchId' => $codCollectionBatchMap[$orderId] ?? null,
+                    ];
+                },
                 $payments,
             );
 
@@ -135,6 +143,74 @@ class OrderPaymentRecordsController extends Controller
                 $map[$orderId] = OrderStatus::SHIPPED->name;
             } else {
                 $map[$orderId] = OrderStatus::tryFrom((int) min($statuses))?->name;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * Resolve batch-collectable provider identity only when the seller has
+     * exactly one shop-order row for the order.
+     *
+     * @param string[] $orderIds
+     * @param string[] $shopIds
+     * @return array<string, array{shopId: string, deliveryCompanyId: string}>
+     */
+    private function sellerDeliveryProviderMap(array $orderIds, array $shopIds): array
+    {
+        if ($orderIds === [] || $shopIds === []) {
+            return [];
+        }
+
+        $rowsByOrder = [];
+        ShopOrder::query()
+            ->whereIn('order_id', $orderIds)
+            ->whereIn('shop_id', $shopIds)
+            ->get(['order_id', 'shop_id', 'delivery_company_id'])
+            ->each(static function (ShopOrder $shopOrder) use (&$rowsByOrder): void {
+                $rowsByOrder[(string) $shopOrder->order_id][] = $shopOrder;
+            });
+
+        $map = [];
+        foreach ($rowsByOrder as $orderId => $rows) {
+            if (count($rows) !== 1 || !trim((string) $rows[0]->delivery_company_id)) {
+                continue;
+            }
+            $map[$orderId] = [
+                'shopId' => (string) $rows[0]->shop_id,
+                'deliveryCompanyId' => (string) $rows[0]->delivery_company_id,
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * @param string[] $orderIds
+     * @param string[] $shopIds
+     * @return array<string, string>
+     */
+    private function codCollectionBatchMap(array $orderIds, array $shopIds): array
+    {
+        if ($orderIds === [] || $shopIds === []) {
+            return [];
+        }
+
+        $batchIdsByOrder = [];
+        CodCollectionBatchOrder::query()
+            ->whereIn('order_id', $orderIds)
+            ->whereIn('shop_id', $shopIds)
+            ->get(['order_id', 'batch_id'])
+            ->each(static function (CodCollectionBatchOrder $membership) use (&$batchIdsByOrder): void {
+                $batchIdsByOrder[(string) $membership->order_id][] = (string) $membership->batch_id;
+            });
+
+        $map = [];
+        foreach ($batchIdsByOrder as $orderId => $batchIds) {
+            $distinctBatchIds = array_values(array_unique($batchIds));
+            if (count($distinctBatchIds) === 1) {
+                $map[$orderId] = $distinctBatchIds[0];
             }
         }
 

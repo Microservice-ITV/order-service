@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\CheckoutSessionController;
 use App\Http\Controllers\Api\CreateShipmentController;
 use App\Http\Controllers\Api\Internal\InvoiceSnapshotController;
 use App\Http\Controllers\Api\CollectOrderPaymentController;
+use App\Http\Controllers\Api\CollectCodBatchController;
 use App\Http\Controllers\Api\OrderPaymentDetailController;
 use App\Http\Controllers\Api\OrderPaymentAllocationsController;
 use App\Http\Controllers\Api\OrderPaymentRecordsController;
@@ -34,6 +35,7 @@ Route::controller(CheckoutController::class)->prefix('orders')->group(function (
     Route::post('/checkout-sessions/{checkout_id}/cancel', [CheckoutSessionController::class, 'cancel'])->name('checkout-sessions.cancel');
     Route::post('/{orderId}/create-shipment', CreateShipmentController::class)->name('orders.create-shipment');
     Route::post('/{orderId}/collect-payment', CollectOrderPaymentController::class)->name('orders.collect-payment');
+    Route::post('/collect-cod-batch', CollectCodBatchController::class)->name('orders.collect-cod-batch');
 });
 
 // Saga-based Order Management Routes (auth handled by auth-service / API gateway if needed)
