@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('wallet.internal')->prefix('internal/orders')->group(function () {
     Route::get('invoice-candidates', [InvoiceSnapshotController::class, 'index'])
         ->name('internal.orders.invoice-candidates');
+    Route::get('checkouts/{checkoutId}/invoice-snapshot', [InvoiceSnapshotController::class, 'showByCheckout'])
+        ->name('internal.checkouts.invoice-snapshot');
     Route::get('{orderId}/wallet-split', [WalletSplitController::class, 'show'])
         ->name('internal.orders.wallet-split');
     Route::get('{orderId}/invoice-snapshot', [InvoiceSnapshotController::class, 'show'])
