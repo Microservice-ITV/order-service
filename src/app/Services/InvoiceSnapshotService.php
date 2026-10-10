@@ -66,6 +66,26 @@ final class InvoiceSnapshotService
         return $this->buildSnapshot($order, $checkout);
     }
 
+    public function buildForCheckout(string $checkoutId): array
+    {
+        $order = $this->orders->findByCheckoutId($checkoutId);
+
+        if ($order === null) {
+            throw new HttpException(404, 'Order not found for checkout');
+        }
+
+        /** @var CheckoutSession|null $checkout */
+        $checkout = $this->checkoutSessions->findWithItemsById(
+            (string) $order->checkout_id
+        );
+
+        if ($checkout === null) {
+            throw new HttpException(404, 'Checkout session not found');
+        }
+
+        return $this->buildSnapshot($order, $checkout);
+    }
+
     /**
      * Fetch invoice-eligible order snapshots in stable keyset-paginated batches.
      *

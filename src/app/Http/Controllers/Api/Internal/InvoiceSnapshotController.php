@@ -20,6 +20,13 @@ final class InvoiceSnapshotController extends Controller
         );
     }
 
+    public function showByCheckout(string $checkoutId): JsonResponse
+    {
+        return response()->json(
+            $this->invoiceSnapshotService->buildForCheckout($checkoutId)
+        );
+    }
+
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
