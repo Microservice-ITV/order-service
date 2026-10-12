@@ -21,7 +21,7 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_FIX_PERMISSIONS: ${AUTO_FIX_PERMISSIONS:-true}
-      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/logs/centralized.log
+      LOG_CENTRALIZED_PATH: ${PHP_WORKING_DIR}/storage/logs/centralized.log
     volumes:
       - ./src/app:${PHP_WORKING_DIR}/app:cached
       - ./src/routes:${PHP_WORKING_DIR}/routes:cached

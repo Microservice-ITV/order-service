@@ -121,7 +121,15 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
   "postal_code": "550000",
   "latitude": 16.0544,
   "longitude": 108.2022,
-  "delivery_note": "Call before delivery"
+  "delivery_note": "Call before delivery",
+  "shipping_total": 5000,
+  "shop_shippings": [
+    {
+      "shop_id": "shop-1001",
+      "shipping_fee": 5000,
+      "delivery_company_id": "company-id-from-shipping-service"
+    }
+  ]
 }
 ```
 
@@ -142,6 +150,22 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
 | `latitude`      | number |          | -90 to 90          |
 | `longitude`     | number |          | -180 to 180        |
 | `delivery_note` | string |          | Max 500            |
+| `shipping_total` | number |          | Optional total; if supplied, must equal the sum of per-shop fees |
+| `shop_shippings` | array | ✓ | Required for checkout shipping; one row per checkout shop |
+| `shop_shippings[].shop_id` | string | ✓ | Checkout shop ID |
+| `shop_shippings[].shipping_fee` | number | ✓ | Customer-paid shipping fee for this shop |
+| `shop_shippings[].delivery_company_id` | string | ✓ | Existing active Delivery Company configured for this shop |
+
+Order Service verifies each shop/Delivery Company association with Accounting before
+persisting it. `shipping_fee` and `shipping_total` are customer charges; Accounting's
+Delivery Company expense is calculated separately from the shop's configured fee rule.
+Submitting `shipping_total` without non-empty `shop_shippings` is rejected.
+The internal verification request uses RabbitMQ request/reply on the shared `order_events`
+exchange. Order sends `ACCOUNTING_SERVICE_API_KEY` in the `x-service-key` AMQP header and
+Accounting compares it with `ORDER_SERVICE_API_KEY`. A correlation ID and temporary reply
+queue keep responses paired with requests; checkout fails closed if Accounting does not
+reply within five seconds. Seller and platform user reads continue to use the Auth Service
+access context.
 
 **Success (200):**
 ```json
@@ -190,11 +214,17 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
 
 | Field            | Type   | Required | Description                          |
 |------------------|--------|----------|--------------------------------------|
-| `courier_code`   | string | ✓        | Max 64 chars                         |
-| `courier_name`   | string | ✓        | Max 255 chars                        |
-| `courier_phone`  | string | ✓        | Max 50 chars                         |
+| `courier_code`   | string |          | Max 64 chars; legacy whole-order shipments only |
+| `courier_name`   | string |          | Max 255 chars; legacy whole-order shipments only |
+| `courier_phone`  | string |          | Max 50 chars; legacy whole-order shipments only |
 | `tracking_number`| string |          | Max 128 chars; auto-generated if omitted |
 | `tracking_url`   | string |          | Valid URL, max 512 chars             |
+| `shop_id`        | string |          | Shop shipment scope; Delivery Company identity is loaded from that shop's order configuration |
+
+For a shop shipment, the configured Delivery Company is taken from the
+`shop_order`; clients cannot override it in this request. Customer shipping charges
+remain checkout charges and are separate from the Delivery Company expense recorded
+by Accounting.
 
 **Success (201):** Order must be in `READY_FOR_FULFILLMENT` status.
 ```json
@@ -505,7 +535,8 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
     "order_reference": "74e888a5-f33e-4dc2-9bb3-54512d67806d",
     "customer_id": "usr_1001",
     "shop_id": "shop-1001",
-    "provider_id": "<canonical Delivery Service provider UUID>",
+    "shop_order_id": "<ShopOrder ID>",
+    "deliveryCompanyId": "<Super Admin Delivery Company ID>",
     "recipient_name": "Kyaw Swar",
     "recipient_phone": "+84901234567",
     "pickup_address": {
@@ -552,6 +583,10 @@ All MQ events use this envelope. Order Service uses `event_id`, `event`, `correl
 ```
 
 **Consumed by:** Delivery Service (creates delivery record, manages lifecycle)
+
+For new ShopOrder-based shipments, `shop_order_id`, `shop_id`, and `deliveryCompanyId`
+are sourced from the persisted ShopOrder. Delivery Company is the only delivery identity
+in shipment messages; operational courier details are not used to identify the company.
 
 ---
 

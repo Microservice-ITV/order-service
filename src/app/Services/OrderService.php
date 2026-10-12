@@ -156,9 +156,9 @@ class OrderService
         }
 
         $shippingTotal = (float) ($checkout->shipping_total ?? 0);
-        $providerIdByShopId = CheckoutShopShipping::query()
+        $deliveryCompanyIdByShopId = CheckoutShopShipping::query()
             ->where('checkout_id', $checkout->id)
-            ->pluck('provider_id', 'shop_id');
+            ->pluck('delivery_company_id', 'shop_id');
         $discountParts = $this->discountParts($checkout);
         $snapshot = is_array($checkout->promotion_snapshot) ? $checkout->promotion_snapshot : [];
 
@@ -186,7 +186,7 @@ class OrderService
                 'id'              => (string) Str::uuid(),
                 'order_id'        => $order->order_id,
                 'shop_id'         => $shopId,
-                'provider_id'     => $providerIdByShopId->get($shopId),
+                'delivery_company_id' => $deliveryCompanyIdByShopId->get($shopId),
                 'subtotal'        => $shopSubtotal,
                 'shipping_total'  => $shopShipping,
                 'discount_total'  => $shopDiscount,

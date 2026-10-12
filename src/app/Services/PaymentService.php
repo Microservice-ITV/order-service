@@ -371,4 +371,35 @@ final class PaymentService
             'previously_collected' => (bool) ($data['previouslyCollected'] ?? false),
         ];
     }
+
+    /**
+     * Collect every COD payment in one persisted shop/provider batch.
+     *
+     * @param array{groupId: string, shopId: string, deliveryCompanyId: string, orderIds: string[], effectiveAt: string} $batch
+     * @return array<string, mixed>
+     */
+    public function collectPaymentsBatch(array $batch): array
+    {
+        $baseUrl = rtrim((string) config('services.payment.url'), '/');
+        $response = Http::timeout(30)->withHeaders([
+            'Content-Type' => 'application/json',
+            'X-SERVICE-KEY' => (string) config('services.payment.api_key'),
+        ])->post($baseUrl . '/api/v1/payments/collect-batch', $batch);
+
+        if (!$response->successful()) {
+            $body = $response->json();
+            $error = is_array($body) && isset($body['error']['message'])
+                ? (string) $body['error']['message']
+                : $response->body();
+            throw new \RuntimeException('Failed to collect COD batch: ' . $error);
+        }
+
+        $responseData = $response->json();
+        $data = is_array($responseData) ? ($responseData['data'] ?? null) : null;
+        if (!is_array($data) || ($data['groupId'] ?? null) !== $batch['groupId']) {
+            throw new \RuntimeException('Invalid COD batch collect response');
+        }
+
+        return $data;
+    }
 }
