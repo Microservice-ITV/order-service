@@ -81,7 +81,7 @@ class CheckoutController extends Controller
                             422,
                         );
                     }
-                    $this->assertActiveShopDeliveryCompany($shopId, $deliveryCompanyId);
+                    // $this->assertActiveShopDeliveryCompany($shopId, $deliveryCompanyId);
 
                     return [
                         'shop_id' => $shopId,
