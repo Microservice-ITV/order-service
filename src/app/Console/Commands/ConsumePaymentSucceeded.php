@@ -21,9 +21,6 @@ use Throwable;
 
 class ConsumePaymentSucceeded extends BaseConsumer
 {
-    /** Platform commission charged per shop, on that shop's own order amount. */
-    private const PLATFORM_FEE_RATE = 0.03;
-
     protected $signature = 'consume:payment-succeeded';
     protected $description = 'Consume payment succeeded events';
 
@@ -322,7 +319,7 @@ class ConsumePaymentSucceeded extends BaseConsumer
      *  - order_amount   = shop grand_total (already nets its discount + shipping)
      *  - discount_share = shop discount_total (informational; reflected in order_amount)
      *  - shipping_share = shop shipping_total (buyer-paid, deducted from payout)
-     *  - platform_fee   = 3% of this shop's order_amount
+     *  - platform_fee   = the configured temporary platform commission rate
      *  - seller_amount  = order_amount - shipping_share - platform_fee
      */
     private function createPaymentAllocations(string $paymentId, string $orderId): void
@@ -353,7 +350,10 @@ class ConsumePaymentSucceeded extends BaseConsumer
             $orderAmount = round((float) $shopOrder->grand_total, 2);
             $discountShare = round((float) $shopOrder->discount_total, 2);
             $shippingShare = round((float) $shopOrder->shipping_total, 2);
-            $platformFee = round($orderAmount * self::PLATFORM_FEE_RATE, 2);
+            $platformFee = round(
+                $orderAmount * (float) config('order.platform_commission_rate', 0.0),
+                2,
+            );
             $sellerAmount = round(max(0.0, $orderAmount - $shippingShare - $platformFee), 2);
 
             app(PaymentService::class)->createPaymentAllocation([

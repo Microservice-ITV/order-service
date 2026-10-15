@@ -46,9 +46,9 @@ final class WalletSplitService
             throw new HttpException(422, 'Checkout has no items');
         }
 
-        $rate = (float) config('order.wallet_platform_commission_rate', 0.05);
+        $rate = (float) config('order.platform_commission_rate', 0.0);
         if ($rate < 0 || $rate > 1) {
-            throw new HttpException(503, 'Invalid ORDER_WALLET_PLATFORM_COMMISSION_RATE');
+            throw new HttpException(503, 'Invalid ORDER_PLATFORM_COMMISSION_RATE');
         }
 
         $currency = (string) ($items->first()->currency ?? 'USD');
