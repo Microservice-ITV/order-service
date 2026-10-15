@@ -32,6 +32,8 @@ class Order extends Model
         'taxable_amount',
         'tax_enabled',
         'grand_total',
+        'cash_paid_amount',
+        'cash_refund_amount',
         'payment_status',
         'courier_code',
         'courier_name',
@@ -53,6 +55,8 @@ class Order extends Model
         'taxable_amount' => 'decimal:2',
         'tax_enabled' => 'boolean',
         'grand_total' => 'decimal:2',
+        'cash_paid_amount' => 'decimal:2',
+        'cash_refund_amount' => 'decimal:2',
     ];
 
     public function checkoutSession(): BelongsTo

@@ -30,7 +30,15 @@ class OrderService
         $discountParts = $this->discountParts($checkout);
         $taxAmount = (float) ($checkout->tax_amount ?? 0);
         $grandTotal = (float) ($checkout->total ?? 0);
-        $isCod = ($checkout->payment_method ?? '') === 'cod';
+        $paymentMethod = (string) ($checkout->payment_method ?? '');
+        $paymentStatus = $paymentMethod === 'cod' ? 'COD' : 'PENDING';
+
+        $cashPaid = $checkout->cash_paid_amount !== null
+            ? round((float) $checkout->cash_paid_amount, 2)
+            : null;
+        $cashRefund = $checkout->cash_refund_amount !== null
+            ? round((float) $checkout->cash_refund_amount, 2)
+            : null;
 
         return $this->orders->createOrder([
             'order_id'       => (string) Str::uuid(),
@@ -48,7 +56,9 @@ class OrderService
             'taxable_amount' => (float) ($checkout->taxable_amount ?? 0),
             'tax_enabled'    => (bool) ($checkout->tax_enabled ?? true),
             'grand_total'    => $grandTotal,
-            'payment_status' => $isCod ? 'COD' : 'PENDING',
+            'cash_paid_amount' => $cashPaid,
+            'cash_refund_amount' => $cashRefund,
+            'payment_status' => $paymentStatus,
         ]);
     }
 
@@ -172,7 +182,32 @@ class OrderService
             $shippingTotal,
         );
 
-        $isCod = ($checkout->payment_method ?? '') === 'cod';
+        $paymentMethod = (string) ($checkout->payment_method ?? '');
+        $shopPaymentStatus = $paymentMethod === 'cod' ? 'COD' : 'PENDING';
+
+        $orderCashPaid = $checkout->cash_paid_amount !== null
+            ? round((float) $checkout->cash_paid_amount, 2)
+            : null;
+        $orderCashRefund = $checkout->cash_refund_amount !== null
+            ? round((float) $checkout->cash_refund_amount, 2)
+            : null;
+
+        $shopGrandTotals = [];
+        foreach ($shopGroups as $shopId => $group) {
+            $shopSubtotal = $shopSubtotals[$shopId];
+            $shopShipping = $shippingByShop[$shopId];
+            $shopDiscount = $splitByShop['promo'][$shopId] ?? 0;
+            $shopBundle = $splitByShop['bundle'][$shopId] ?? 0;
+            $shopTax = round((float) ($group['tax_total'] ?? 0), 2);
+            $shopGrandTotals[$shopId] = round($shopSubtotal + $shopShipping - $shopDiscount - $shopBundle + $shopTax, 2);
+        }
+
+        $cashRefundByShop = $orderCashRefund !== null
+            ? PromotionAllocationSplitter::proportional($shopIds, $shopGrandTotals, $orderCashRefund)
+            : array_fill_keys($shopIds, null);
+        $cashPaidByShop = $orderCashPaid !== null
+            ? PromotionAllocationSplitter::proportional($shopIds, $shopGrandTotals, $orderCashPaid)
+            : array_fill_keys($shopIds, null);
 
         foreach ($shopGroups as $shopId => $group) {
             $shopSubtotal = $shopSubtotals[$shopId];
@@ -180,7 +215,7 @@ class OrderService
             $shopDiscount = $splitByShop['promo'][$shopId] ?? 0;
             $shopBundle = $splitByShop['bundle'][$shopId] ?? 0;
             $shopTax = round((float) ($group['tax_total'] ?? 0), 2);
-            $shopGrandTotal = round($shopSubtotal + $shopShipping - $shopDiscount - $shopBundle + $shopTax, 2);
+            $shopGrandTotal = $shopGrandTotals[$shopId];
 
             $shopOrder = ShopOrder::create([
                 'id'              => (string) Str::uuid(),
@@ -193,8 +228,10 @@ class OrderService
                 'bundle_discount' => $shopBundle,
                 'tax_total'       => $shopTax,
                 'grand_total'     => $shopGrandTotal,
+                'cash_paid_amount' => $cashPaidByShop[$shopId],
+                'cash_refund_amount' => $cashRefundByShop[$shopId],
                 'order_status'    => $order->order_status,
-                'payment_status'  => $isCod ? 'COD' : 'PENDING',
+                'payment_status'  => $shopPaymentStatus,
             ]);
 
             // Update order_items with shop_order_id
@@ -213,12 +250,13 @@ class OrderService
 
     public function markPaid(CheckoutSession $checkout): bool
     {
-        $isCod = ($checkout->payment_method ?? '') === 'cod';
+        $method = (string) ($checkout->payment_method ?? '');
+        $isOffline = $method === 'cod';
         $update = [
             'order_status'  => OrderStatus::PAID->value,
             'updated_at'    => now(),
         ];
-        if (!$isCod) {
+        if (!$isOffline) {
             $update['payment_status'] = 'PAID';
         }
 

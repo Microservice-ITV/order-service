@@ -52,6 +52,8 @@ class CheckoutController extends Controller
                 'shop_shippings.*.delivery_company_id' => ['required', 'string', 'max:64'],
                 'promo_code' => ['nullable', 'string', 'max:64'],
                 'payment_method' => ['nullable', 'string', 'in:prepaid,cod'],
+                'cash_paid_amount' => ['nullable', 'numeric', 'min:0'],
+                'cash_refund_amount' => ['nullable', 'numeric', 'min:0'],
             ]));
 
             if (!array_key_exists('shipping_total', $validated)) {
@@ -70,6 +72,16 @@ class CheckoutController extends Controller
 
             $paymentMethod = $validated['payment_method'] ?? null;
             unset($validated['payment_method']);
+
+            $cashPaidAmount = array_key_exists('cash_paid_amount', $validated) && $validated['cash_paid_amount'] !== null
+                ? round((float) $validated['cash_paid_amount'], 2)
+                : null;
+            unset($validated['cash_paid_amount']);
+
+            $cashRefundAmount = array_key_exists('cash_refund_amount', $validated) && $validated['cash_refund_amount'] !== null
+                ? round((float) $validated['cash_refund_amount'], 2)
+                : null;
+            unset($validated['cash_refund_amount']);
 
             $shopShippings = array_map(
                 function (array $row): array {
@@ -100,6 +112,8 @@ class CheckoutController extends Controller
                 shopShippings: $shopShippings,
                 promoCode: $promoCode,
                 paymentMethod: $paymentMethod,
+                cashPaidAmount: $cashPaidAmount,
+                cashRefundAmount: $cashRefundAmount,
             );
 
             if ($result['not_found'] === true) {

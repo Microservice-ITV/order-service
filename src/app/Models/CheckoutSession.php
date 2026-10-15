@@ -45,6 +45,8 @@ class CheckoutSession extends Model
         'reservation_id',
         'payment_id',
         'payment_method',
+        'cash_paid_amount',
+        'cash_refund_amount',
         'client_secret',
         'expire_at',
     ];
@@ -58,6 +60,8 @@ class CheckoutSession extends Model
         'tax_enabled' => 'boolean',
         'tax_amount' => 'decimal:2',
         'taxable_amount' => 'decimal:2',
+        'cash_paid_amount' => 'decimal:2',
+        'cash_refund_amount' => 'decimal:2',
         'address_updated_at' => 'datetime',
     ];
 

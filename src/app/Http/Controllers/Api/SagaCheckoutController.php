@@ -126,10 +126,17 @@ class SagaCheckoutController extends Controller
             ], 422);
         }
 
-        if (!$this->checkoutService->updatePaymentMethod($checkout_id, $paymentMethod)) {
+        try {
+            if (!$this->checkoutService->updatePaymentMethod($checkout_id, $paymentMethod)) {
+                return response()->json([
+                    'error' => 'Checkout session not found',
+                ], 404);
+            }
+        } catch (\RuntimeException $e) {
             return response()->json([
-                'error' => 'Checkout session not found',
-            ], 404);
+                'error' => 'Failed to update payment method for checkout',
+                'detail' => $e->getMessage(),
+            ], 502);
         }
 
         return response()->json([

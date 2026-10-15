@@ -27,6 +27,8 @@ class ShopOrder extends Model
         'bundle_discount',
         'tax_total',
         'grand_total',
+        'cash_paid_amount',
+        'cash_refund_amount',
         'order_status',
         'payment_status',
         'tracking_number',
@@ -45,6 +47,8 @@ class ShopOrder extends Model
         'bundle_discount' => 'decimal:2',
         'tax_total' => 'decimal:2',
         'grand_total' => 'decimal:2',
+        'cash_paid_amount' => 'decimal:2',
+        'cash_refund_amount' => 'decimal:2',
         'shipment_created_at' => 'datetime',
     ];
 

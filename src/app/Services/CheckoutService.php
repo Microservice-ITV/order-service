@@ -264,6 +264,61 @@ class CheckoutService
             return false;
         }
 
+        /** @var ?CheckoutSession $checkout */
+        $checkout = $this->checkoutSessions->findById($checkoutId);
+        if (!$checkout) {
+            return false;
+        }
+
+        // When a payment intent already exists, switch it at payment-service too.
+        // Updating only checkout_sessions leaves a stale gateway intent behind.
+        if ($checkout->payment_id !== null && $checkout->payment_id !== '') {
+            $amount = (float) ($checkout->total ?? 0);
+            if ($amount <= 0) {
+                $amount = (float) ($checkout->items()->sum('line_total') ?? 0)
+                    + (float) ($checkout->shipping_total ?? 0)
+                    + (float) ($checkout->tax_amount ?? 0)
+                    - (float) ($checkout->promotion_discount_total ?? 0);
+            }
+
+            $firstItem = $checkout->relationLoaded('items')
+                ? $checkout->items->first()
+                : $checkout->items()->first();
+            $currency = $firstItem && $firstItem->currency ? (string) $firstItem->currency : 'USD';
+
+            try {
+                $paymentResult = $this->paymentService->updatePaymentIntentAmount(
+                    $checkoutId,
+                    max(0.01, round($amount, 2)),
+                    $currency,
+                    $paymentMethod,
+                );
+            } catch (\RuntimeException $e) {
+                logger()->error('CHECKOUT_PAYMENT_METHOD_SWITCH_FAILED', [
+                    'checkout_id' => $checkoutId,
+                    'payment_method' => $paymentMethod,
+                    'error' => $e->getMessage(),
+                ]);
+                throw $e;
+            }
+
+            $update = [
+                'payment_method' => $paymentMethod,
+                'updated_at' => now(),
+            ];
+            if (!empty($paymentResult['client_secret'])) {
+                $update['client_secret'] = $paymentResult['client_secret'];
+            }
+            if (!empty($paymentResult['payment_id'])) {
+                $update['payment_id'] = $paymentResult['payment_id'];
+            }
+
+            return $this->checkoutSessions->updateWhere(
+                [['id', '=', $checkoutId]],
+                $update,
+            ) === 1;
+        }
+
         return $this->checkoutSessions->updateWhere(
             [['id', '=', $checkoutId]],
             [
@@ -458,6 +513,8 @@ class CheckoutService
         ?array $shopShippings = null,
         ?string $promoCode = null,
         ?string $paymentMethod = null,
+        ?float $cashPaidAmount = null,
+        ?float $cashRefundAmount = null,
     ): array {
         /** @var ?CheckoutSession $checkout */
         $checkout = $this->checkoutSessions->findById($checkoutId);
@@ -480,6 +537,13 @@ class CheckoutService
                 'address_updated_at' => null,
             ];
         }
+
+        // Staff cash uses the offline 'cod' intent at payment-service, but
+        // persists 'prepaid' as the checkout's method so orders/invoices treat
+        // counter cash as prepaid. The presence of cash tender marks it offline.
+        $isCashTender = $cashPaidAmount !== null || $cashRefundAmount !== null;
+        $paymentServiceMethod = $isCashTender ? 'cod' : $effectivePaymentMethod;
+        $persistedPaymentMethod = $isCashTender ? 'prepaid' : $effectivePaymentMethod;
 
         $blockedStatuses = [
             OrderStatus::PAID,
@@ -654,7 +718,7 @@ class CheckoutService
                     $checkoutId,
                     $grandTotal,
                     $currency,
-                    $effectivePaymentMethod,
+                    $paymentServiceMethod,
                 );
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_PAYMENT_INTENT_UPDATE_FAILED', [
@@ -674,6 +738,14 @@ class CheckoutService
 
             $updatedAt = now();
 
+            $cashFields = [];
+            if ($cashPaidAmount !== null) {
+                $cashFields['cash_paid_amount'] = round(max(0.0, $cashPaidAmount), 2);
+            }
+            if ($cashRefundAmount !== null) {
+                $cashFields['cash_refund_amount'] = round(max(0.0, $cashRefundAmount), 2);
+            }
+
             try {
                 DB::transaction(function () use (
                     $checkoutId,
@@ -685,11 +757,12 @@ class CheckoutService
                     $paymentResult,
                     $promotionQuote,
                     $taxQuote,
-                    $effectivePaymentMethod,
+                    $persistedPaymentMethod,
+                    $cashFields,
                 ): void {
                     $updated = $this->checkoutSessions->updateWhere(
                         [['id', '=', $checkoutId]],
-                        [
+                        array_merge([
                             'delivery_address' => $deliveryAddress,
                             'address_updated_at' => $updatedAt,
                             'shipping_total' => $effectiveShipping,
@@ -701,9 +774,9 @@ class CheckoutService
                             'tax_snapshot' => $taxQuote,
                             'total' => $grandTotal,
                             'client_secret' => $paymentResult['client_secret'],
-                            'payment_method' => $effectivePaymentMethod,
+                            'payment_method' => $persistedPaymentMethod,
                             'updated_at' => $updatedAt,
-                        ]
+                        ], $cashFields)
                     );
 
                     if ($updated !== 1) {
@@ -766,8 +839,14 @@ class CheckoutService
             }
 
             try {
-                $checkout->payment_method = $effectivePaymentMethod;
-                $this->authorizeCodPaymentIfNeeded($checkout);
+                $checkout->payment_method = $persistedPaymentMethod;
+                if (array_key_exists('cash_paid_amount', $cashFields)) {
+                    $checkout->cash_paid_amount = $cashFields['cash_paid_amount'];
+                }
+                if (array_key_exists('cash_refund_amount', $cashFields)) {
+                    $checkout->cash_refund_amount = $cashFields['cash_refund_amount'];
+                }
+                $this->authorizeCodPaymentIfNeeded($checkout, $isCashTender);
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_COD_AUTHORIZE_FAILED', [
                     'checkout_id' => $checkoutId,
@@ -838,12 +917,15 @@ class CheckoutService
     }
 
     /**
-     * For COD checkouts, publish payment.completed only after address/shipping
-     * are applied so the saga does not create the order with a stale total.
+     * For COD / staff-cash checkouts, publish payment.completed only after
+     * address/shipping are applied so the saga does not create the order with
+     * a stale total. Staff cash persists payment_method=prepaid but is still an
+     * offline tender, so $isCashTender forces the offline authorize path.
      */
-    private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout): void
+    private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout, bool $isCashTender = false): void
     {
-        if (($checkout->payment_method ?? 'cod') !== 'cod') {
+        $method = (string) ($checkout->payment_method ?? 'cod');
+        if (!$isCashTender && $method !== 'cod') {
             return;
         }
 
@@ -857,6 +939,7 @@ class CheckoutService
         logger()->info('CHECKOUT_COD_AUTHORISED', [
             'checkout_id' => $checkout->id,
             'payment_id' => $paymentId,
+            'payment_method' => $method,
         ]);
     }
 
