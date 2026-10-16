@@ -160,6 +160,7 @@ final class PaymentService
         float $amount,
         ?string $currency = null,
         ?string $paymentMethod = null,
+        ?string $provider = null,
     ): array {
         $baseUrl = rtrim((string) config('services.payment.url'), '/');
 
@@ -169,6 +170,9 @@ final class PaymentService
         }
         if ($paymentMethod !== null && $paymentMethod !== '') {
             $payload['payment_method'] = $paymentMethod;
+        }
+        if ($provider !== null && $provider !== '') {
+            $payload['provider'] = $provider;
         }
 
         logger()->info('PAYMENT_INTENT_UPDATE_REQUEST', [

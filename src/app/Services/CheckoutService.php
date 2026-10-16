@@ -538,12 +538,14 @@ class CheckoutService
             ];
         }
 
-        // Staff cash uses the offline 'cod' intent at payment-service, but
-        // persists 'prepaid' as the checkout's method so orders/invoices treat
-        // counter cash as prepaid. The presence of cash tender marks it offline.
+        // Staff cash is an offline *prepaid* tender collected at the counter:
+        // payment-service records it with provider='cash' and
+        // payment_method='prepaid' (no gateway, no COD collection batch). The
+        // presence of cash tender marks it.
         $isCashTender = $cashPaidAmount !== null || $cashRefundAmount !== null;
-        $paymentServiceMethod = $isCashTender ? 'cod' : $effectivePaymentMethod;
-        $persistedPaymentMethod = $isCashTender ? 'prepaid' : $effectivePaymentMethod;
+        $paymentServiceMethod = $isCashTender ? 'prepaid' : $effectivePaymentMethod;
+        $paymentServiceProvider = $isCashTender ? 'cash' : null;
+        $persistedPaymentMethod = $paymentServiceMethod;
 
         $blockedStatuses = [
             OrderStatus::PAID,
@@ -719,6 +721,7 @@ class CheckoutService
                     $grandTotal,
                     $currency,
                     $paymentServiceMethod,
+                    $paymentServiceProvider,
                 );
             } catch (\RuntimeException $e) {
                 logger()->error('CHECKOUT_PAYMENT_INTENT_UPDATE_FAILED', [
@@ -919,8 +922,9 @@ class CheckoutService
     /**
      * For COD / staff-cash checkouts, publish payment.completed only after
      * address/shipping are applied so the saga does not create the order with
-     * a stale total. Staff cash persists payment_method=prepaid but is still an
-     * offline tender, so $isCashTender forces the offline authorize path.
+     * a stale total. Staff cash persists payment_method=prepaid with
+     * provider='cash' at payment-service but is still an offline tender, so
+     * $isCashTender forces the offline authorize path.
      */
     private function authorizeCodPaymentIfNeeded(CheckoutSession $checkout, bool $isCashTender = false): void
     {
