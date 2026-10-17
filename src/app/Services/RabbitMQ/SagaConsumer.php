@@ -24,11 +24,8 @@ class SagaConsumer extends BaseConsumer
         EventTopic::SAGA_INVENTORY_RESERVATION_FAILED,
         EventTopic::SAGA_PAYMENT_COMPLETED,
         EventTopic::SAGA_PAYMENT_FAILED,
-        EventTopic::SAGA_SHIPMENT_COMPLETED,
-        EventTopic::SAGA_SHIPMENT_FAILED,
         EventTopic::INVENTORY_RELEASE_COMPLETED,
         EventTopic::PAYMENT_CANCEL_COMPLETED,
-        EventTopic::SHIPMENT_CANCEL_COMPLETED,
     ];
 
     private SagaOrchestrator $sagaOrchestrator;
@@ -55,8 +52,13 @@ class SagaConsumer extends BaseConsumer
     public function process(array $payload): void
     {
         $event = $payload['event'] ?? '';
-        $sagaId = isset($payload['saga_id']) ? (string) $payload['saga_id'] : '';
-        $step = isset($payload['step']) ? (string) $payload['step'] : '';
+        $eventData = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+        $sagaId = isset($eventData['saga_id'])
+            ? (string) $eventData['saga_id']
+            : (string) ($payload['saga_id'] ?? '');
+        $step = isset($eventData['step'])
+            ? (string) $eventData['step']
+            : (string) ($payload['step'] ?? '');
 
         if ($event === '') {
             throw new SagaException('Missing event key in payload');
@@ -89,24 +91,12 @@ class SagaConsumer extends BaseConsumer
                 $this->handleStepFailed($sagaId, 'PAYMENT_PROCESSING', $payload['error'] ?? 'Unknown error');
                 break;
 
-            case EventTopic::SAGA_SHIPMENT_COMPLETED:
-                $this->handleStepCompleted($sagaId, 'SHIPMENT_CREATION');
-                break;
-
-            case EventTopic::SAGA_SHIPMENT_FAILED:
-                $this->handleStepFailed($sagaId, 'SHIPMENT_CREATION', $payload['error'] ?? 'Unknown error');
-                break;
-
             case EventTopic::INVENTORY_RELEASE_COMPLETED:
                 $this->handleCompensationCompleted($sagaId, 'INVENTORY_RELEASE');
                 break;
 
             case EventTopic::PAYMENT_CANCEL_COMPLETED:
                 $this->handleCompensationCompleted($sagaId, 'PAYMENT_CANCELLATION');
-                break;
-
-            case EventTopic::SHIPMENT_CANCEL_COMPLETED:
-                $this->handleCompensationCompleted($sagaId, 'SHIPMENT_CANCELLATION');
                 break;
 
             default:
@@ -120,9 +110,14 @@ class SagaConsumer extends BaseConsumer
      */
     private function handleSagaCreated(array $payload): void
     {
-        $sagaId = $payload['saga_id'];
-        $type = $payload['type'];
-        $data = $payload['data'];
+        $data = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+        $sagaId = (string) ($data['saga_id'] ?? $payload['saga_id'] ?? '');
+        if ($sagaId === '') {
+            throw new SagaException('Saga creation event is missing saga_id');
+        }
+        $type = (string) ($data['type'] ?? $payload['type'] ?? SagaState::TYPE_ORDER_CREATION);
+        $data['saga_id'] = $sagaId;
+        $data['correlation_id'] ??= $payload['correlation_id'] ?? null;
 
         Log::info('Creating new saga', [
             'saga_id' => $sagaId,

@@ -14,6 +14,7 @@ use App\Services\CheckoutService;
 use App\Services\EventPayloadBuilder;
 use App\Services\OrderService;
 use App\Services\PaymentService;
+use App\Services\SagaOrchestrator;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use Illuminate\Support\Facades\DB;
@@ -84,10 +85,18 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 return;
             }
 
+            $saga = app(SagaRepository::class)->findByOrderId($checkoutId);
+
             $existingOrder = \App\Models\Order::query()->where('checkout_id', $checkoutId)->first();
             if ($existingOrder || in_array($checkout->status_id, [OrderStatus::PAID, OrderStatus::CONFIRMED], true)) {
                 if ($paymentId && $existingOrder) {
                     app(PaymentService::class)->attachOrder($paymentId, $existingOrder->order_id);
+                }
+                if ($saga) {
+                    app(SagaOrchestrator::class)->recordObservedStepCompletion(
+                        $saga->saga_id,
+                        'PAYMENT_PROCESSING',
+                    );
                 }
                 logger()->info(LogMessage::PAYMENT_COMPLETED_ALREADY_PROCESSED, [
                     'checkout_id' => $checkoutId,
@@ -105,6 +114,13 @@ class ConsumePaymentSucceeded extends BaseConsumer
                     'expire_at'   => $checkout->getExpireAtIso(),
                 ]);
                 return;
+            }
+
+            if ($saga) {
+                app(SagaOrchestrator::class)->assertStepCanRun(
+                    $saga->saga_id,
+                    'PAYMENT_PROCESSING',
+                );
             }
 
             $orderItemIds = [];
@@ -183,18 +199,13 @@ class ConsumePaymentSucceeded extends BaseConsumer
                 $this->createPaymentAllocations($paymentId, $order->order_id);
             }
 
-            // Advance the saga tracker: payment processing succeeded.
-            $sagaRepository = app(SagaRepository::class);
-            $saga = $sagaRepository->findByOrderId($checkoutId);
-            if ($saga && !in_array('PAYMENT_PROCESSING', $saga->completed_steps ?? [], true)) {
-                $sagaRepository->completeStep($saga->saga_id, 'PAYMENT_PROCESSING');
-
-                logger()->info('SAGA_STEP_COMPLETED_FROM_PAYMENT_SUCCEEDED', [
-                    'saga_id'  => $saga->saga_id,
-                    'step'     => 'PAYMENT_PROCESSING',
-                    'checkout_id' => $checkoutId,
-                    'order_id' => $order->order_id,
-                ]);
+            // Record payment completion after the order/payment side effects
+            // have committed. The orchestrator persists this transition once.
+            if ($saga) {
+                app(SagaOrchestrator::class)->recordObservedStepCompletion(
+                    $saga->saga_id,
+                    'PAYMENT_PROCESSING',
+                );
             }
 
             logger()->info(LogMessage::ORDER_CREATED_AFTER_PAYMENT, [

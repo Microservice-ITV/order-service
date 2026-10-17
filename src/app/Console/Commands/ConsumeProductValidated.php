@@ -8,6 +8,7 @@ use App\Models\CheckoutShopShipping;
 use App\Repositories\SagaRepository;
 use App\Services\CheckoutService;
 use App\Services\PaymentService;
+use App\Services\SagaOrchestrator;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Logging\LogMessage;
 
@@ -60,6 +61,15 @@ class ConsumeProductValidated extends BaseConsumer
                 'reason'      => 'CHECKOUT_NOT_FOUND_OR_EXPIRED',
             ]);
             return;
+        }
+
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga) {
+            app(SagaOrchestrator::class)->assertStepCanRun(
+                $saga->saga_id,
+                'INVENTORY_RESERVATION',
+            );
         }
 
         $total = (float) ($data['total'] ?? $this->calculateOrderTotal($checkoutId));
@@ -166,17 +176,12 @@ class ConsumeProductValidated extends BaseConsumer
             'reservation_id' => $reservationId,
         ]);
 
-        // Advance the saga tracker: inventory reservation succeeded.
-        $sagaRepository = app(SagaRepository::class);
-        $saga = $sagaRepository->findByOrderId($checkoutId);
-        if ($saga && !in_array('INVENTORY_RESERVATION', $saga->completed_steps ?? [], true)) {
-            $sagaRepository->completeStep($saga->saga_id, 'INVENTORY_RESERVATION');
-
-            logger()->info('SAGA_STEP_COMPLETED_FROM_STOCK_RESERVED', [
-                'saga_id'  => $saga->saga_id,
-                'step'     => 'INVENTORY_RESERVATION',
-                'checkout_id' => $checkoutId,
-            ]);
+        // Record inventory before preparing the next payment step.
+        if ($saga) {
+            app(SagaOrchestrator::class)->recordObservedStepCompletion(
+                $saga->saga_id,
+                'INVENTORY_RESERVATION',
+            );
         }
 
         $expireAtIso = $checkout->getExpireAtIso();
@@ -207,6 +212,14 @@ class ConsumeProductValidated extends BaseConsumer
                 $checkoutId,
                 'PAYMENT_INTENT_CREATION_FAILED'
             );
+
+            if ($saga) {
+                app(SagaOrchestrator::class)->recordObservedStepFailure(
+                    $saga->saga_id,
+                    'PAYMENT_PROCESSING',
+                    'PAYMENT_INTENT_CREATION_FAILED',
+                );
+            }
 
             return;
         }

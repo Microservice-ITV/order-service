@@ -40,12 +40,27 @@ class SagaOrchestrator
         return $this->sagaRepository;
     }
 
+    public function assertStepCanRun(string $sagaId, string $stepName): void
+    {
+        if (!$this->sagaRepository->isStepExpected($sagaId, $stepName)) {
+            throw new SagaException("Saga step {$stepName} arrived out of order");
+        }
+    }
+
     /**
      * Start a new saga
      */
     public function startSaga(string $type, array $data): string
     {
-        $sagaId = (string) \Illuminate\Support\Str::uuid();
+        $providedSagaId = trim((string) ($data['saga_id'] ?? ''));
+        if ($providedSagaId !== '') {
+            if ($this->sagaRepository->findById($providedSagaId)) {
+                return $providedSagaId;
+            }
+            $sagaId = $providedSagaId;
+        } else {
+            $sagaId = (string) \Illuminate\Support\Str::uuid();
+        }
         
         $saga = $this->sagaRepository->create([
             'saga_id' => $sagaId,
@@ -57,14 +72,6 @@ class SagaOrchestrator
         ]);
 
         $saga->start();
-
-        // Publish saga start event
-        // $this->eventPublisher->publish(EventTopic::SAGA_ORDER_CREATED, [
-        //     'saga_id' => $sagaId,
-        //     'type' => $type,
-        //     'data' => $data,
-        //     'timestamp' => now()->toISOString(),
-        // ]);
 
         Log::info('Saga started', [
             'saga_id' => $sagaId,
@@ -181,7 +188,9 @@ class SagaOrchestrator
             'step' => $stepName,
         ]);
 
-        $this->sagaRepository->completeStep($sagaId, $stepName);
+        if (!$this->sagaRepository->completeStep($sagaId, $stepName)) {
+            throw new SagaException("Saga step {$stepName} is not the next expected step");
+        }
 
         // Publish completion event
         $this->eventPublisher->publish($step['completion_event'], [
@@ -193,6 +202,39 @@ class SagaOrchestrator
 
         // Execute next step
         $this->executeNextStep($sagaId);
+    }
+
+    /**
+     * Record a step completed by the existing order event flow without
+     * dispatching a second copy of its work as a saga command.
+     */
+    public function recordObservedStepCompletion(string $sagaId, string $stepName): void
+    {
+        if (!$this->sagaRepository->completeStep($sagaId, $stepName)) {
+            throw new SagaException("Saga step {$stepName} is not the next expected step");
+        }
+
+        Log::info('Saga step completed from order event', [
+            'saga_id' => $sagaId,
+            'step' => $stepName,
+        ]);
+    }
+
+    /** Record a failure reported by an existing order event consumer. */
+    public function recordObservedStepFailure(
+        string $sagaId,
+        string $stepName,
+        string $errorMessage,
+    ): void {
+        if (!$this->sagaRepository->failStep($sagaId, $stepName, $errorMessage)) {
+            throw new SagaException("Saga step {$stepName} cannot be marked failed");
+        }
+
+        Log::error('Saga step failed from order event', [
+            'saga_id' => $sagaId,
+            'step' => $stepName,
+            'error' => $errorMessage,
+        ]);
     }
 
     /**
@@ -211,7 +253,9 @@ class SagaOrchestrator
             'error' => $errorMessage,
         ]);
 
-        $this->sagaRepository->failStep($sagaId, $stepName, $errorMessage);
+        if (!$this->sagaRepository->failStep($sagaId, $stepName, $errorMessage)) {
+            throw new SagaException("Saga step {$stepName} cannot be marked failed");
+        }
 
         // Publish failure event
         $step = SagaStep::getStep($stepName);

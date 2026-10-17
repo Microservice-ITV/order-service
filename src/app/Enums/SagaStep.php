@@ -26,33 +26,18 @@ class SagaStep
             'failure_event' => EventTopic::SAGA_PAYMENT_FAILED,
             'compensation_event' => EventTopic::PAYMENT_CANCEL_REQUESTED,
         ],
-        'SHIPMENT_CREATION' => [
-            'order' => 3,
-            'name' => 'Shipment Creation',
-            'event' => EventTopic::SAGA_SHIPMENT_REQUESTED,
-            'completion_event' => EventTopic::SAGA_SHIPMENT_COMPLETED,
-            'failure_event' => EventTopic::SAGA_SHIPMENT_FAILED,
-            'compensation_event' => EventTopic::SHIPMENT_CANCEL_REQUESTED,
-        ],
     ];
 
     public const COMPENSATION_STEPS = [
-        'SHIPMENT_CANCELLATION' => [
-            'order' => 1,
-            'name' => 'Shipment Cancellation',
-            'event' => EventTopic::SHIPMENT_CANCEL_REQUESTED,
-            'completion_event' => EventTopic::SHIPMENT_CANCEL_COMPLETED,
-            'depends_on' => ['PAYMENT_PROCESSING', 'INVENTORY_RESERVATION'],
-        ],
         'PAYMENT_CANCELLATION' => [
-            'order' => 2,
+            'order' => 1,
             'name' => 'Payment Cancellation',
             'event' => EventTopic::PAYMENT_CANCEL_REQUESTED,
             'completion_event' => EventTopic::PAYMENT_CANCEL_COMPLETED,
             'depends_on' => ['INVENTORY_RESERVATION'],
         ],
         'INVENTORY_RELEASE' => [
-            'order' => 3,
+            'order' => 2,
             'name' => 'Inventory Release',
             'event' => EventTopic::INVENTORY_RELEASE_REQUESTED,
             'completion_event' => EventTopic::INVENTORY_RELEASE_COMPLETED,
