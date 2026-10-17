@@ -7,6 +7,7 @@ use App\Enums\OrderStatus;
 use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\CheckoutService;
+use App\Services\SagaOrchestrator;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use App\Logging\LogMessage;
@@ -61,6 +62,15 @@ class ConsumeProductRejected extends BaseConsumer
             return;
         }
 
+        $sagaRepository = app(SagaRepository::class);
+        $saga = $sagaRepository->findByOrderId($checkoutId);
+        if ($saga && $checkout?->status_id === OrderStatus::PENDING_STOCK) {
+            app(SagaOrchestrator::class)->assertStepCanRun(
+                $saga->saga_id,
+                'INVENTORY_RESERVATION',
+            );
+        }
+
         $rejected = $checkoutService->reject($checkoutId, $reason);
         if (!$rejected) {
             logger()->warning(LogMessage::CHECKOUT_REJECT_IGNORED_INVALID_STATE, [
@@ -69,18 +79,13 @@ class ConsumeProductRejected extends BaseConsumer
             return;
         }
 
-        // Advance the saga tracker: inventory reservation failed → compensation flagged.
-        $sagaRepository = app(SagaRepository::class);
-        $saga = $sagaRepository->findByOrderId($checkoutId);
-        if ($saga && !in_array('INVENTORY_RESERVATION', $saga->failed_steps ?? [], true)) {
-            $sagaRepository->failStep($saga->saga_id, 'INVENTORY_RESERVATION', $reason);
-
-            logger()->info('SAGA_STEP_FAILED_FROM_STOCK_REJECTED', [
-                'saga_id'  => $saga->saga_id,
-                'step'     => 'INVENTORY_RESERVATION',
-                'checkout_id' => $checkoutId,
-                'reason'   => $reason,
-            ]);
+        // Record inventory failure in the same per-checkout saga state machine.
+        if ($saga) {
+            app(SagaOrchestrator::class)->recordObservedStepFailure(
+                $saga->saga_id,
+                'INVENTORY_RESERVATION',
+                (string) $reason,
+            );
         }
 
         $checkout = $checkoutService->findById($checkoutId);

@@ -6,6 +6,7 @@ use App\Enums\EventTopic;
 use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\CheckoutService;
+use App\Services\SagaOrchestrator;
 use App\Services\RabbitMQ\BaseConsumer;
 use App\Services\RabbitMQ\Publisher;
 use App\Logging\LogMessage;
@@ -48,6 +49,14 @@ class ConsumePaymentFailed extends BaseConsumer
 
         $reason = $data['reason'] ?? null;
         $checkoutService = app(CheckoutService::class);
+        $saga = app(SagaRepository::class)->findByOrderId($checkoutId);
+        if ($saga) {
+            app(SagaOrchestrator::class)->assertStepCanRun(
+                $saga->saga_id,
+                'PAYMENT_PROCESSING',
+            );
+        }
+
         if (!$checkoutService->fail($checkoutId, $reason)) {
             logger()->warning(LogMessage::PAYMENT_FAIL_IGNORED_INVALID_STATE, [
                 'checkout_id' => $checkoutId,
@@ -55,18 +64,13 @@ class ConsumePaymentFailed extends BaseConsumer
             return;
         }
 
-        // Advance the saga tracker: payment processing failed → compensation flagged.
-        $sagaRepository = app(SagaRepository::class);
-        $saga = $sagaRepository->findByOrderId($checkoutId);
-        if ($saga && !in_array('PAYMENT_PROCESSING', $saga->failed_steps ?? [], true)) {
-            $sagaRepository->failStep($saga->saga_id, 'PAYMENT_PROCESSING', $reason ?? 'PAYMENT_FAILED');
-
-            logger()->info('SAGA_STEP_FAILED_FROM_PAYMENT_FAILED', [
-                'saga_id'  => $saga->saga_id,
-                'step'     => 'PAYMENT_PROCESSING',
-                'checkout_id' => $checkoutId,
-                'reason'   => $reason,
-            ]);
+        // Record payment failure in the per-checkout saga state machine.
+        if ($saga) {
+            app(SagaOrchestrator::class)->recordObservedStepFailure(
+                $saga->saga_id,
+                'PAYMENT_PROCESSING',
+                (string) ($reason ?? 'PAYMENT_FAILED'),
+            );
         }
 
         $checkout = $checkoutService->findById($checkoutId);

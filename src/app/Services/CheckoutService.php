@@ -1164,6 +1164,7 @@ class CheckoutService
         ?array $deliveryAddress = null,
         string $paymentMethod = 'cod',
         ?array $customerMeta = null,
+        bool $deferOrderEvent = false,
     ): array {
         if ($items === []) {
             throw new BusinessException('Cart empty', 400);
@@ -1209,7 +1210,9 @@ class CheckoutService
             throw $e;
         }
 
-        $this->publishOrderCheckoutEvent($checkout, $idempotencyHash);
+        if (!$deferOrderEvent) {
+            $this->publishOrderCheckoutEvent($checkout, $idempotencyHash);
+        }
 
         return ['checkout' => $checkout, 'existing' => false];
     }
@@ -1299,7 +1302,7 @@ class CheckoutService
         });
     }
 
-    private function publishOrderCheckoutEvent(CheckoutSession $checkout, string $correlationId): void
+    public function publishOrderCheckoutEvent(CheckoutSession $checkout, string $correlationId): void
     {
         $checkout->loadMissing('items');
         $eventItems = $checkout->items->map(static function ($item): array {

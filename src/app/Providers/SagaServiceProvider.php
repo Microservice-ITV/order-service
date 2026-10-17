@@ -11,7 +11,7 @@ use Illuminate\Support\ServiceProvider;
 /**
  * Saga Service Provider
  * 
- * Registers saga-related services and sets up the saga consumer.
+ * Registers saga state, orchestration, and management services.
  */
 class SagaServiceProvider extends ServiceProvider
 {
@@ -35,7 +35,7 @@ class SagaServiceProvider extends ServiceProvider
             return new SagaCheckoutService(
                 $app->make(\App\Services\CheckoutService::class),
                 $app->make(SagaOrchestrator::class),
-                $app->make(\App\Services\RabbitMQ\Publisher::class)
+                $app->make(\App\Services\RabbitMQ\Publisher::class),
             );
         });
 
@@ -47,14 +47,4 @@ class SagaServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * Bootstrap services.
-     */
-    public function boot(): void
-    {
-        // Register the saga consumer if we're in the right environment
-        if (config('app.env') !== 'testing') {
-            $this->app->make(SagaConsumer::class);
-        }
-    }
 }

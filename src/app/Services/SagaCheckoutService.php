@@ -3,14 +3,11 @@
 namespace App\Services;
 
 use App\Enums\EventTopic;
-use App\Enums\SagaStep;
 use App\Exceptions\SagaException;
-use App\Models\SagaState;
 use App\Repositories\SagaRepository;
 use App\Services\EventPayloadBuilder;
 use App\Services\RabbitMQ\Publisher;
 use App\Services\SagaOrchestrator;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -28,7 +25,7 @@ class SagaCheckoutService
     public function __construct(
         CheckoutService $checkoutService,
         SagaOrchestrator $sagaOrchestrator,
-        Publisher $eventPublisher
+        Publisher $eventPublisher,
     ) {
         $this->checkoutService = $checkoutService;
         $this->sagaOrchestrator = $sagaOrchestrator;
@@ -66,10 +63,13 @@ class SagaCheckoutService
                 $deliveryAddress,
                 $paymentMethod,
                 $customerMeta,
+                deferOrderEvent: true,
             );
 
             if ($checkoutResult['existing']) {
-                $saga = $this->sagaOrchestrator->sagaRepository->findByOrderId($checkoutResult['checkout']->id);
+                $saga = $this->sagaOrchestrator->getSagaRepository()->findByOrderId(
+                    $checkoutResult['checkout']->id,
+                );
 
                 return [
                     'checkout' => $checkoutResult['checkout'],
@@ -82,24 +82,65 @@ class SagaCheckoutService
             $checkout = $checkoutResult['checkout'];
 
             // Start saga for order creation
-            $sagaId = $this->sagaOrchestrator->startSaga(
-                'ORDER_CREATION',
-                [
-                    'order_id' => $checkout->id,
-                    'correlation_id' => $checkout->idempotency_key,
-                    'checkout_id' => $checkout->id,
-                    'user_id' => $userId,
-                    'customer_type' => (string) ($customerMeta['type'] ?? 'USER'),
-                    'guest_id' => $customerMeta['guest_id'] ?? null,
-                    'guest_phone' => $customerMeta['guest_phone'] ?? null,
-                    'items' => $items,
-                    'delivery_address' => $deliveryAddress,
-                    'created_at' => now()->toISOString(),
-                ]
-            );
+            $sagaData = [
+                'order_id' => $checkout->id,
+                'correlation_id' => $checkout->idempotency_key,
+                'checkout_id' => $checkout->id,
+                'user_id' => $userId,
+                'customer_type' => (string) ($customerMeta['type'] ?? 'USER'),
+                'guest_id' => $customerMeta['guest_id'] ?? null,
+                'guest_phone' => $customerMeta['guest_phone'] ?? null,
+                'items' => $items,
+                'delivery_address' => $deliveryAddress,
+                'created_at' => now()->toISOString(),
+            ];
 
-            // Publish initial order event
-            $this->publishOrderCheckoutEvent($checkout, $checkout->idempotency_key, $sagaId);
+            try {
+                $sagaId = $this->sagaOrchestrator->startSaga(
+                    'ORDER_CREATION',
+                    $sagaData,
+                );
+            } catch (\Throwable $e) {
+                $this->checkoutService->reject($checkout->id, 'SAGA_INITIALIZATION_FAILED');
+                Log::error('Saga initialization failed; checkout rejected before publishing stock request', [
+                    'checkout_id' => $checkout->id,
+                    'error' => $e->getMessage(),
+                ]);
+                throw $e;
+            }
+
+            // Keep the saga event for external observers, but publish it only
+            // after the saga row exists and use the standard envelope shape.
+            try {
+                $this->eventPublisher->publish(
+                    EventTopic::SAGA_ORDER_CREATED,
+                    EventPayloadBuilder::build(
+                        EventTopic::SAGA_ORDER_CREATED,
+                        (string) $checkout->idempotency_key,
+                        [
+                            ...$sagaData,
+                            'saga_id' => $sagaId,
+                            'type' => 'ORDER_CREATION',
+                        ],
+                    ),
+                );
+            } catch (\Throwable $e) {
+                // The event publisher persists failed outbox rows for scheduled
+                // retry; it must not prevent the existing checkout flow.
+                Log::warning('Saga creation event publication deferred to outbox retry', [
+                    'checkout_id' => $checkout->id,
+                    'saga_id' => $sagaId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Persist the saga before publishing the existing checkout event. The
+            // stock-reserved consumer can run immediately and must be able to
+            // find its saga before recording the inventory step.
+            $this->checkoutService->publishOrderCheckoutEvent(
+                $checkout,
+                (string) $checkout->idempotency_key,
+            );
 
             return [
                 'checkout' => $checkout,
@@ -122,7 +163,7 @@ class SagaCheckoutService
     /**
      * Complete checkout with saga
      */
-    public function completeSagaCheckout(string $checkoutId, array $paymentData = null): array
+    public function completeSagaCheckout(string $checkoutId, ?array $paymentData = null): array
     {
         try {
             $checkout = $this->checkoutService->validateCheckout($checkoutId);
@@ -184,82 +225,6 @@ class SagaCheckoutService
             'completed_at' => $saga->completed_at?->toISOString(),
             'timeout_at' => $saga->timeout_at?->toISOString(),
         ];
-    }
-
-    /**
-     * Publish order checkout event with saga context
-     */
-    private function publishOrderCheckoutEvent($checkout, string $correlationId, string $sagaId): void
-    {
-        $checkout->loadMissing('items');
-        $eventItems = $checkout->items->map(static function ($item): array {
-            return [
-                'product_id' => $item->product_id,
-                'variant_id' => $item->variant_id ?? null,
-                'sku' => $item->product_sku,
-                'slug' => $item->product_slug,
-                'name' => $item->product_title,
-                'description' => $item->product_description,
-                'image_url' => $item->image_url,
-                'qty' => (int) $item->qty,
-                'unit_price' => (float) $item->price,
-                'subtotal' => isset($item->line_total) ? (float) $item->line_total : ((float) $item->price * (int) $item->qty),
-                'currency' => $item->currency ?? 'USD',
-                'shop_id' => $item->shop_id,
-                'category_id' => $item->category_id,
-                'available_stock' => isset($item->available_stock) ? (int) $item->available_stock : null,
-            ];
-        })->values()->all();
-
-        $currency = 'USD';
-        if ($eventItems !== []) {
-            $currency = (string) ($eventItems[0]['currency'] ?? 'USD');
-        }
-
-        $subtotal = (float) array_reduce(
-            $eventItems,
-            static fn (float $carry, array $item): float => $carry + (float) ($item['subtotal'] ?? ((float) $item['unit_price'] * (int) $item['qty'])),
-            0.0
-        );
-
-        $shippingTotal = round((float) ($checkout->shipping_total ?? 0), 2);
-        $discountTotal = round((float) ($checkout->promotion_discount_total ?? 0), 2);
-        $grandTotal = round((float) ($checkout->total ?? max(0, $subtotal + $shippingTotal - $discountTotal)), 2);
-
-        $payload = EventPayloadBuilder::build(EventTopic::SAGA_ORDER_CREATED, $correlationId, [
-            'saga_id' => $sagaId,
-            'order_id' => $checkout->id,
-            'checkout_id' => $checkout->id,
-            'user_id' => (string) $checkout->user_id,
-            'status' => 'CREATED',
-            'items' => $eventItems,
-            'subtotal' => round($subtotal, 2),
-            'shipping_total' => $shippingTotal,
-            'promotion_discount_total' => $discountTotal,
-            'total' => $grandTotal,
-            'currency' => $currency,
-            'delivery_address' => $checkout->delivery_address,
-            'placedAt' => optional($checkout->created_at)?->copy()->utc()->toIso8601String(),
-            'updatedAt' => optional($checkout->updated_at)?->copy()->utc()->toIso8601String(),
-            'expires_at' => $checkout->getExpireAtIso(),
-        ]);
-
-        try {
-            $this->eventPublisher->publish(EventTopic::SAGA_ORDER_CREATED, $payload);
-
-            Log::info('Saga order event published', [
-                'checkout_id' => $checkout->id,
-                'saga_id' => $sagaId,
-                'payload' => $payload,
-            ]);
-        } catch (\Throwable $e) {
-            Log::warning('Saga order event publish failed', [
-                'checkout_id' => $checkout->id,
-                'saga_id' => $sagaId,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
     }
 
     /**

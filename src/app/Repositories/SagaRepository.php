@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\SagaState;
+use App\Enums\SagaStep;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -27,7 +28,10 @@ class SagaRepository
             'correlation_id' => $data['correlation_id'] ?? null,
             'data' => $data['data'] ?? [],
             'step_order' => $data['step_order'] ?? 1,
-            'total_steps' => $data['total_steps'] ?? 3,
+            'total_steps' => $data['total_steps'] ?? count(SagaStep::getExecutionOrder()),
+            'current_step' => 1,
+            'completed_steps' => [],
+            'failed_steps' => [],
             'started_at' => null,
             'completed_at' => null,
             'timeout_at' => $data['timeout_at'] ?? now()->addMinutes(30),
@@ -48,6 +52,48 @@ class SagaRepository
     public function findByOrderId(string $orderId): ?SagaState
     {
         return SagaState::where('order_id', $orderId)->first();
+    }
+
+    /**
+     * Whether an event is allowed to execute its saga step now. A step that
+     * was already completed is allowed through for idempotent redelivery.
+     */
+    public function isStepExpected(string $sagaId, string $stepName): bool
+    {
+        $orderedSteps = array_keys(SagaStep::getExecutionOrder());
+        if (!in_array($stepName, $orderedSteps, true)) {
+            return false;
+        }
+
+        $saga = $this->findById($sagaId);
+        if (!$saga) {
+            return false;
+        }
+
+        $completedSteps = array_values(array_unique(array_filter(
+            $saga->completed_steps ?? [],
+            static fn ($step): bool => is_string($step) && in_array($step, $orderedSteps, true),
+        )));
+        if (in_array($stepName, $completedSteps, true)) {
+            return true;
+        }
+
+        if (in_array($saga->status, [
+            SagaState::STATUS_COMPLETED,
+            SagaState::STATUS_COMPENSATING,
+            SagaState::STATUS_FAILED,
+            SagaState::STATUS_TIMEOUT,
+        ], true)) {
+            return false;
+        }
+
+        foreach ($orderedSteps as $expectedStep) {
+            if (!in_array($expectedStep, $completedSteps, true)) {
+                return $expectedStep === $stepName;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -83,26 +129,80 @@ class SagaRepository
      */
     public function completeStep(string $sagaId, string $stepName): bool
     {
-        $saga = $this->findById($sagaId);
-        if (!$saga) {
+        $orderedSteps = array_keys(SagaStep::getExecutionOrder());
+        if (!in_array($stepName, $orderedSteps, true)) {
             return false;
         }
 
-        $completedSteps = $saga->completed_steps ?? [];
-        $completedSteps[] = $stepName;
-        
-        $updateData = [
+        return DB::transaction(function () use ($sagaId, $stepName, $orderedSteps): bool {
+            $saga = SagaState::query()
+                ->where('saga_id', $sagaId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$saga) {
+                return false;
+            }
+
+            // Normalize legacy duplicate / shipment entries while applying the
+            // new order-placement sequence (inventory reservation, payment).
+            $completedSteps = array_values(array_unique(array_filter(
+                $saga->completed_steps ?? [],
+                static fn ($step): bool => is_string($step) && in_array($step, $orderedSteps, true),
+            )));
+            $totalSteps = count($orderedSteps);
+
+            if (in_array($stepName, $completedSteps, true)) {
+                if (!in_array($saga->status, [
+                    SagaState::STATUS_FAILED,
+                    SagaState::STATUS_TIMEOUT,
+                    SagaState::STATUS_COMPENSATING,
+                ], true)) {
+                    $this->persistCompletedSteps($saga, $completedSteps, $totalSteps);
+                }
+                return true;
+            }
+
+            if (in_array($saga->status, [
+                SagaState::STATUS_FAILED,
+                SagaState::STATUS_TIMEOUT,
+                SagaState::STATUS_COMPENSATING,
+                SagaState::STATUS_COMPLETED,
+            ], true)) {
+                return false;
+            }
+
+            $expectedStep = null;
+            foreach ($orderedSteps as $candidate) {
+                if (!in_array($candidate, $completedSteps, true)) {
+                    $expectedStep = $candidate;
+                    break;
+                }
+            }
+
+            if ($expectedStep !== $stepName) {
+                return false;
+            }
+
+            $completedSteps[] = $stepName;
+            $this->persistCompletedSteps($saga, $completedSteps, $totalSteps);
+
+            return true;
+        });
+    }
+
+    /** @param list<string> $completedSteps */
+    private function persistCompletedSteps(SagaState $saga, array $completedSteps, int $totalSteps): void
+    {
+        $isComplete = count($completedSteps) >= $totalSteps;
+        $saga->forceFill([
             'completed_steps' => $completedSteps,
-            'current_step' => count($completedSteps),
-        ];
-
-        // Check if saga is completed
-        if (count($completedSteps) >= $saga->total_steps) {
-            $updateData['status'] = SagaState::STATUS_COMPLETED;
-            $updateData['completed_at'] = now();
-        }
-
-        return SagaState::where('saga_id', $sagaId)->update($updateData);
+            'total_steps' => $totalSteps,
+            'current_step' => $isComplete ? $totalSteps : count($completedSteps) + 1,
+            ...($isComplete
+                ? ['status' => SagaState::STATUS_COMPLETED, 'completed_at' => $saga->completed_at ?? now()]
+                : []),
+        ])->save();
     }
 
     /**
@@ -110,26 +210,60 @@ class SagaRepository
      */
     public function failStep(string $sagaId, string $stepName, string $errorMessage): bool
     {
-        $saga = $this->findById($sagaId);
-        if (!$saga) {
+        $orderedSteps = array_keys(SagaStep::getExecutionOrder());
+        if (!in_array($stepName, $orderedSteps, true)) {
             return false;
         }
 
-        $failedSteps = $saga->failed_steps ?? [];
-        $failedSteps[] = $stepName;
-        
-        $updateData = [
-            'failed_steps' => $failedSteps,
-            'error_message' => $errorMessage,
-        ];
+        return DB::transaction(function () use ($sagaId, $stepName, $errorMessage): bool {
+            $saga = SagaState::query()
+                ->where('saga_id', $sagaId)
+                ->lockForUpdate()
+                ->first();
 
-        // Trigger compensation if not already triggered
-        if (!$saga->compensation_required) {
-            $updateData['compensation_required'] = true;
-            $updateData['status'] = SagaState::STATUS_COMPENSATING;
-        }
+            if (!$saga) {
+                return false;
+            }
 
-        return SagaState::where('saga_id', $sagaId)->update($updateData);
+            $failedSteps = array_values(array_unique($saga->failed_steps ?? []));
+            if (in_array($stepName, $failedSteps, true)) {
+                return true;
+            }
+
+            if (in_array($saga->status, [
+                SagaState::STATUS_COMPLETED,
+                SagaState::STATUS_FAILED,
+                SagaState::STATUS_TIMEOUT,
+            ], true)) {
+                return false;
+            }
+
+            if (in_array($stepName, $saga->completed_steps ?? [], true)) {
+                return false;
+            }
+
+            $completedSteps = $saga->completed_steps ?? [];
+            $expectedStep = null;
+            foreach (array_keys(SagaStep::getExecutionOrder()) as $candidate) {
+                if (!in_array($candidate, $completedSteps, true)) {
+                    $expectedStep = $candidate;
+                    break;
+                }
+            }
+            if ($expectedStep !== $stepName) {
+                return false;
+            }
+
+            $failedSteps[] = $stepName;
+            $saga->forceFill([
+                'failed_steps' => $failedSteps,
+                'error_message' => $errorMessage,
+                'compensation_required' => true,
+                'status' => SagaState::STATUS_COMPENSATING,
+            ])->save();
+
+            return true;
+        });
     }
 
     /**
