@@ -3,6 +3,8 @@
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CheckoutSessionController;
 use App\Http\Controllers\Api\CreateShipmentController;
+use App\Http\Controllers\Api\CancelShippedOrderController;
+use App\Http\Controllers\Api\MarkOrderReturnedController;
 use App\Http\Controllers\Api\Internal\InvoiceSnapshotController;
 use App\Http\Controllers\Api\CollectOrderPaymentController;
 use App\Http\Controllers\Api\CollectCodBatchController;
@@ -36,6 +38,8 @@ Route::controller(CheckoutController::class)->prefix('orders')->group(function (
     Route::get('/checkout-sessions/{checkout_id}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');
     Route::post('/checkout-sessions/{checkout_id}/cancel', [CheckoutSessionController::class, 'cancel'])->name('checkout-sessions.cancel');
     Route::post('/{orderId}/create-shipment', CreateShipmentController::class)->name('orders.create-shipment');
+    Route::post('/{orderId}/cancel', CancelShippedOrderController::class)->name('orders.cancel-shipped');
+    Route::post('/{orderId}/return', MarkOrderReturnedController::class)->name('orders.return');
     Route::post('/{orderId}/collect-payment', CollectOrderPaymentController::class)->name('orders.collect-payment');
     Route::post('/collect-cod-batch', CollectCodBatchController::class)->name('orders.collect-cod-batch');
 });

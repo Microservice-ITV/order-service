@@ -50,6 +50,7 @@ class OrderPaymentRecordsController extends Controller
                     $orderId = (string) ($payment['orderId'] ?? '');
                     return [
                         ...$payment,
+                        'wayBillNo' => $statusMap[$orderId]['wayBillNo'] ?? null,
                         'deliveryStatus' => $statusMap[$orderId]['orderStatus'] ?? null,
                         'deliveryStatusId' => $statusMap[$orderId]['orderStatusId'] ?? null,
                         'sellerDeliveryStatus' => $sellerStatusMap[$orderId] ?? null,
@@ -219,7 +220,7 @@ class OrderPaymentRecordsController extends Controller
 
     /**
      * @param string[] $orderIds
-     * @return array<string, array{orderStatusId: int|null, orderStatus: string|null, paymentId: string|null}>
+     * @return array<string, array{orderStatusId: int|null, orderStatus: string|null, paymentId: string|null, wayBillNo: string|null}>
      */
     private function orderStatusMap(array $orderIds): array
     {
@@ -239,6 +240,7 @@ class OrderPaymentRecordsController extends Controller
                     'orderStatusId' => $order->order_status,
                     'orderStatus' => $order->orderStatus?->name,
                     'paymentId' => $order->payment_id,
+                    'wayBillNo' => $order->way_bill_no,
                 ];
             });
 
