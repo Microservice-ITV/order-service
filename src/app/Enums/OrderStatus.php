@@ -24,5 +24,5 @@ enum OrderStatus: int
     case DRAFT = 18;
     case PAUSED = 20;
     case ACTIVE = 21;
+    case RETURNED = 22;
 }
-

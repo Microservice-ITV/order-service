@@ -42,12 +42,20 @@ class Order extends Model
         'way_bill_no',
         'tracking_url',
         'shipment_created_at',
+        'cancellation_reason',
+        'cancelled_at',
+        'return_deadline_at',
+        'return_reason',
+        'returned_at',
     ];
 
     protected $casts = [
         'order_status' => 'integer',
         'user_id' => 'string',
         'shipment_created_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'return_deadline_at' => 'datetime',
+        'returned_at' => 'datetime',
         'subtotal' => 'decimal:2',
         'shipping_total' => 'decimal:2',
         'discount_total' => 'decimal:2',
