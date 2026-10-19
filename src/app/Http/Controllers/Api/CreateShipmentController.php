@@ -55,6 +55,7 @@ class CreateShipmentController extends Controller
                 'phone' => $shopOrder?->courier_phone ?? $order->courier_phone,
             ],
             'tracking_number' => $shopOrder?->tracking_number ?? $order->tracking_number,
+            'way_bill_no' => $order->way_bill_no,
             'tracking_url' => $shopOrder?->tracking_url ?? $order->tracking_url,
             'shipment_created_at' => ($shopOrder?->shipment_created_at ?? $order->shipment_created_at)?->toIso8601String(),
         ], 201);

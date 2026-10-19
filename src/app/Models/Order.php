@@ -39,6 +39,7 @@ class Order extends Model
         'courier_name',
         'courier_phone',
         'tracking_number',
+        'way_bill_no',
         'tracking_url',
         'shipment_created_at',
     ];

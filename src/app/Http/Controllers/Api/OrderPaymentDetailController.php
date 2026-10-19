@@ -36,6 +36,7 @@ class OrderPaymentDetailController extends Controller
                     'orderStatusId' => $order->order_status,
                     'orderStatus' => $order->orderStatus?->name,
                     'trackingNumber' => $order->tracking_number,
+                    'wayBillNo' => $order->way_bill_no,
                     'trackingUrl' => $order->tracking_url,
                     'courierCode' => $order->courier_code,
                     'courierName' => $order->courier_name,

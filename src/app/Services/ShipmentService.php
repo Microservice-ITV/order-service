@@ -11,6 +11,7 @@ use App\Models\Order;
 use App\Models\ShopOrder;
 use App\Services\EventPayloadBuilder;
 use App\Services\RabbitMQ\Publisher;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class ShipmentService
@@ -25,7 +26,7 @@ final class ShipmentService
      * order ships at once (legacy behaviour, still gated on ALL shops
      * being ready).
      *
-     * @param array{courier_code: string, courier_name: string, courier_phone: string, tracking_number?: string|null, tracking_url?: string|null} $input
+     * @param array{courier_code?: string|null, courier_name?: string|null, courier_phone?: string|null, tracking_number?: string|null, way_bill_no: string, tracking_url?: string|null} $input
      * @return Order
      * @throws BusinessException
      */
@@ -35,6 +36,11 @@ final class ShipmentService
         $order = $this->orders->findById($orderId);
         if (!$order) {
             throw new BusinessException('Order not found', 404);
+        }
+
+        $wayBillNo = trim((string) ($input['way_bill_no'] ?? ''));
+        if ($wayBillNo === '') {
+            throw new BusinessException('Waybill number is required before creating a shipment', 422);
         }
 
         $orderMustBeReady = $shopId === null;
@@ -54,7 +60,7 @@ final class ShipmentService
         }
 
         if ($shopId !== null) {
-            return $this->shipShop($order, $shopId, $input, $trackingNumber, $trackingUrl);
+            return $this->shipShop($order, $shopId, $trackingNumber, $trackingUrl, $wayBillNo);
         }
 
         if (ShopOrder::where('order_id', $orderId)->whereNotNull('delivery_company_id')->exists()) {
@@ -66,30 +72,47 @@ final class ShipmentService
         }
 
         // --- Legacy path: all-or-nothing shipment (gated on all shops ready) ---
-        $pendingShopCount = ShopOrder::where('order_id', $orderId)
-            ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
-            ->count();
-
-        if ($pendingShopCount > 0) {
-            throw new BusinessException(
-                'All shops must be ready for fulfillment before shipment',
-                409,
-                ['pending_shop_count' => $pendingShopCount]
-            );
-        }
-
         $updateData = [
             'courier_code' => $input['courier_code'] ?? null,
             'courier_name' => $input['courier_name'] ?? null,
             'courier_phone' => $input['courier_phone'] ?? null,
             'tracking_number' => $trackingNumber,
+            'way_bill_no' => $wayBillNo,
             'tracking_url' => $trackingUrl,
             'order_status' => OrderStatus::SHIPPED->value,
             'shipment_created_at' => now(),
             'updated_at' => now(),
         ];
 
-        $this->orders->updateByOrderId($orderId, $updateData);
+        DB::transaction(function () use ($orderId, $wayBillNo, $updateData): void {
+            $lockedOrder = Order::where('order_id', $orderId)->lockForUpdate()->first();
+            if (!$lockedOrder) {
+                throw new BusinessException('Order not found', 404);
+            }
+
+            if ($lockedOrder->order_status !== OrderStatus::READY_FOR_FULFILLMENT->value) {
+                throw new BusinessException(
+                    'Order must be in READY_FOR_FULFILLMENT status to create shipment',
+                    409,
+                    ['current_status_id' => $lockedOrder->order_status]
+                );
+            }
+
+            $this->assertWayBillNoCanBeSet($lockedOrder, $wayBillNo);
+
+            $pendingShopCount = ShopOrder::where('order_id', $orderId)
+                ->where('order_status', '!=', OrderStatus::READY_FOR_FULFILLMENT->value)
+                ->count();
+            if ($pendingShopCount > 0) {
+                throw new BusinessException(
+                    'All shops must be ready for fulfillment before shipment',
+                    409,
+                    ['pending_shop_count' => $pendingShopCount]
+                );
+            }
+
+            $this->orders->updateByOrderId($orderId, $updateData);
+        });
 
         $order->refresh();
 
@@ -104,54 +127,66 @@ final class ShipmentService
     private function shipShop(
         Order $order,
         string $shopId,
-        array $input,
         ?string $trackingNumber,
-        ?string $trackingUrl
+        ?string $trackingUrl,
+        string $wayBillNo,
     ): Order {
-        /** @var \App\Models\ShopOrder|null $shopOrder */
-        $shopOrder = ShopOrder::where('order_id', $order->order_id)
-            ->where('shop_id', $shopId)
-            ->first();
+        $derivedStatus = DB::transaction(function () use (
+            $order,
+            $shopId,
+            $trackingNumber,
+            $trackingUrl,
+            $wayBillNo,
+        ): int {
+            $lockedOrder = Order::where('order_id', $order->order_id)->lockForUpdate()->first();
+            if (!$lockedOrder) {
+                throw new BusinessException('Order not found', 404);
+            }
+            $this->assertWayBillNoCanBeSet($lockedOrder, $wayBillNo);
 
-        if (!$shopOrder) {
-            throw new BusinessException('Shop not found in this order', 404);
-        }
+            $lockedShopOrder = ShopOrder::where('order_id', $order->order_id)
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->first();
+            if (!$lockedShopOrder) {
+                throw new BusinessException('Shop not found in this order', 404);
+            }
+            if ($lockedShopOrder->order_status !== OrderStatus::READY_FOR_FULFILLMENT->value) {
+                throw new BusinessException(
+                    'This shop is not ready for fulfillment',
+                    409,
+                    ['shop_order_status' => $lockedShopOrder->order_status]
+                );
+            }
+            if (!$lockedShopOrder->delivery_company_id) {
+                throw new BusinessException(
+                    'Configure an active Delivery Company for this shop before creating a shipment',
+                    409,
+                    ['reason' => 'shop_delivery_company_not_configured']
+                );
+            }
 
-        if ($shopOrder->order_status !== OrderStatus::READY_FOR_FULFILLMENT->value) {
-            throw new BusinessException(
-                'This shop is not ready for fulfillment',
-                409,
-                ['shop_order_status' => $shopOrder->order_status]
-            );
-        }
+            // Store the order-wide waybill atomically with this shop's shipment.
+            $lockedShopOrder->update([
+                'tracking_number' => $trackingNumber,
+                'courier_code' => null,
+                'courier_name' => null,
+                'courier_phone' => null,
+                'tracking_url' => $trackingUrl,
+                'order_status' => OrderStatus::SHIPPED->value,
+                'shipment_created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-        if (!$shopOrder->delivery_company_id) {
-            throw new BusinessException(
-                'Configure an active Delivery Company for this shop before creating a shipment',
-                409,
-                ['reason' => 'shop_delivery_company_not_configured']
-            );
-        }
+            $derivedStatus = app(OrderService::class)->derivedOrderStatus($order->order_id);
+            $this->orders->updateOrderStatus($order->order_id, [
+                'order_status' => $derivedStatus,
+                'way_bill_no' => $wayBillNo,
+                'updated_at' => now(),
+            ]);
 
-        // Persist per-shop shipment data on the shop_order.
-        $shopOrder->update([
-            'tracking_number'   => $trackingNumber,
-            'courier_code'      => null,
-            'courier_name'      => null,
-            'courier_phone'     => null,
-            'tracking_url'      => $trackingUrl,
-            'order_status'      => OrderStatus::SHIPPED->value,
-            'shipment_created_at' => now(),
-            'updated_at'        => now(),
-        ]);
-
-        // Derive the order-level status from all shop_orders (no sync).
-        $orderService = app(OrderService::class);
-        $derivedStatus = $orderService->derivedOrderStatus($order->order_id);
-        $this->orders->updateOrderStatus($order->order_id, [
-            'order_status' => $derivedStatus,
-            'updated_at'   => now(),
-        ]);
+            return $derivedStatus;
+        });
 
         $order->refresh();
 
@@ -164,6 +199,18 @@ final class ShipmentService
         $this->publishShipmentCreated($order, $shopId);
 
         return $order;
+    }
+
+    private function assertWayBillNoCanBeSet(Order $order, string $wayBillNo): void
+    {
+        $existingWayBillNo = trim((string) $order->way_bill_no);
+        if ($existingWayBillNo !== '' && !hash_equals($existingWayBillNo, $wayBillNo)) {
+            throw new BusinessException(
+                'Waybill number cannot be changed after shipment has started',
+                409,
+                ['way_bill_no' => $existingWayBillNo],
+            );
+        }
     }
 
     /**
@@ -276,6 +323,7 @@ final class ShipmentService
                 'phone'=> $courierPhone,
             ],
             'tracking_number' => $trackingNumber,
+            'way_bill_no'     => $order->way_bill_no,
             'tracking_url'    => $trackingUrl,
             // Fresh per-shop statuses (the shipping shop is now SHIPPED) so
             // the read model can recompute order-level progress exactly.
