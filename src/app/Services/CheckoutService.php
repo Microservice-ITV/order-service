@@ -578,14 +578,9 @@ class CheckoutService
 
         $effectiveShipping = null;
         $normalizedShopShippings = $this->normalizeShopShippingsPayload($shopShippings);
-        $hasUnconfiguredShop = $normalizedShopShippings === [];
-        foreach ($normalizedShopShippings as $row) {
-            if (empty($row['delivery_company_id'])) {
-                $hasUnconfiguredShop = true;
-                break;
-            }
-        }
-        if ($hasUnconfiguredShop) {
+        // A shop may omit delivery_company_id when it has no company, or none can
+        // serve the customer's route. The order is still placed; delivery is arranged later.
+        if ($normalizedShopShippings === []) {
             return [
                 'not_found' => false,
                 'invalid_state' => true,

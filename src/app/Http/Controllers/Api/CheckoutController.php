@@ -49,7 +49,7 @@ class CheckoutController extends Controller
                 'shop_shippings' => ['required', 'array', 'min:1'],
                 'shop_shippings.*.shop_id' => ['required', 'string', 'max:64'],
                 'shop_shippings.*.shipping_fee' => ['required', 'numeric', 'min:0'],
-                'shop_shippings.*.delivery_company_id' => ['required', 'string', 'max:64'],
+                'shop_shippings.*.delivery_company_id' => ['nullable', 'string', 'max:64'],
                 'promo_code' => ['nullable', 'string', 'max:64'],
                 'payment_method' => ['nullable', 'string', 'in:prepaid,cod'],
                 'cash_paid_amount' => ['nullable', 'numeric', 'min:0'],
@@ -86,8 +86,8 @@ class CheckoutController extends Controller
             $shopShippings = array_map(
                 function (array $row): array {
                     $shopId = trim((string) $row['shop_id']);
-                    $deliveryCompanyId = trim((string) $row['delivery_company_id']);
-                    if ($shopId === '' || $deliveryCompanyId === '') {
+                    $deliveryCompanyId = trim((string) ($row['delivery_company_id'] ?? ''));
+                    if ($shopId === '') {
                         throw new BusinessException(
                             'Each shop must select an active Delivery Company configured for that shop',
                             422,
@@ -98,7 +98,7 @@ class CheckoutController extends Controller
                     return [
                         'shop_id' => $shopId,
                         'shipping_fee' => (float) $row['shipping_fee'],
-                        'delivery_company_id' => $deliveryCompanyId,
+                        'delivery_company_id' => $deliveryCompanyId !== '' ? $deliveryCompanyId : null,
                     ];
                 },
                 $validated['shop_shippings']
