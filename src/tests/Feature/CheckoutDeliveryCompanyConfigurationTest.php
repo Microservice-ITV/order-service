@@ -85,16 +85,15 @@ final class CheckoutDeliveryCompanyConfigurationTest extends TestCase
         $this->checkoutService->shouldNotHaveReceived('updateDeliveryAddress');
     }
 
-    public function test_missing_delivery_company_id_is_rejected(): void
+    public function test_missing_delivery_company_id_is_accepted(): void
     {
         $row = $this->shopShipping();
         unset($row['delivery_company_id']);
+        $this->expectSuccessfulCheckoutUpdate();
 
         $this->putJson($this->addressUrl(), $this->basePayload([
             'shop_shippings' => [$row],
-        ]))
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('shop_shippings.0.delivery_company_id');
+        ]))->assertOk();
     }
 
     public function test_canonical_delivery_company_is_accepted(): void
