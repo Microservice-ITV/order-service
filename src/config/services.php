@@ -39,6 +39,10 @@ return [
         ],
     ],
     
+    'auth' => [
+        'url' => env('AUTH_SERVICE_URL', 'http://authservice-nginx:80'),
+    ],
+
     'product' => [
         'url' => env('PRODUCT_SERVICE_URL'),
         'api_key' => env('PRODUCT_SERVICE_API_KEY'),
